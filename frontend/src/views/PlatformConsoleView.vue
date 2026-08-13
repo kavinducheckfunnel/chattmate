@@ -17,47 +17,66 @@ limitations under the License.
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import DashboardLayout from '@/layouts/DashboardLayout.vue'
+import TenantDrawer from '@/components/platform/TenantDrawer.vue'
 import {
-  getPlatformStats, listTenants, getTenant, updateTenant, deleteTenant, listAudit,
-  type PlatformStats, type TenantRow, type TenantDetail, type AuditEntry,
+  getPlatformStats, listTenants, deleteTenant, listAudit,
+  getPlatformPlans, updatePlan, getOperators,
+  type PlatformStats, type TenantRow, type AuditEntry,
+  type PlatformPlan, type Operator,
 } from '@/services/platform'
-import { getPlans, type Plan } from '@/services/usage'
 import { extractApiError } from '@/utils/apiError'
+
+type Tab = 'tenants' | 'plans' | 'operators' | 'audit'
+const tab = ref<Tab>('tenants')
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'tenants', label: 'Tenants' },
+  { key: 'plans', label: 'Plans' },
+  { key: 'operators', label: 'Operators' },
+  { key: 'audit', label: 'Audit' },
+]
 
 const loading = ref(true)
 const error = ref('')
+const busy = ref(false)
+
 const stats = ref<PlatformStats | null>(null)
 const tenants = ref<TenantRow[]>([])
 const totalTenants = ref(0)
-const plans = ref<Plan[]>([])
 const search = ref('')
 
-const selected = ref<TenantDetail | null>(null)
-const detailLoading = ref(false)
-const busy = ref(false)
-
+const plans = ref<PlatformPlan[]>([])
+const operators = ref<Operator[]>([])
 const audit = ref<AuditEntry[]>([])
-const showAudit = ref(false)
 
-// Deleting a tenant destroys every conversation it owns, so the domain has to
-// be typed. The server enforces this too — this is the humane half, not the
-// security half.
-const deleteTarget = ref<TenantDetail | null>(null)
+const selectedTenantId = ref<string | null>(null)
+const deleteTarget = ref<TenantRow | null>(null)
 const deleteConfirm = ref('')
+
+// Draft edits for one plan at a time. Kept out of `plans` so an abandoned edit
+// does not leave the table showing numbers that were never saved.
+const editingPlan = ref<string | null>(null)
+const planDraft = ref<Record<string, number | null>>({})
+
+const LIMIT_FIELDS: { key: string; label: string }[] = [
+  { key: 'max_conversations_per_month', label: 'Conversations / month' },
+  { key: 'max_ai_messages_per_month', label: 'AI replies / month' },
+  { key: 'max_agents', label: 'Agents' },
+  { key: 'max_seats', label: 'Team members' },
+  { key: 'max_knowledge_docs', label: 'Knowledge sources' },
+]
+
+const loadTenants = async () => {
+  const t = await listTenants({ q: search.value || undefined, limit: 100 })
+  tenants.value = t.tenants
+  totalTenants.value = t.total
+}
 
 const load = async () => {
   loading.value = true
   error.value = ''
   try {
-    const [s, t, p] = await Promise.all([
-      getPlatformStats(),
-      listTenants({ q: search.value || undefined, limit: 100 }),
-      getPlans(),
-    ])
+    const [s] = await Promise.all([getPlatformStats(), loadTenants()])
     stats.value = s
-    tenants.value = t.tenants
-    totalTenants.value = t.total
-    plans.value = p
   } catch (e) {
     error.value = extractApiError(e, 'Could not load the console')
   } finally {
@@ -67,43 +86,52 @@ const load = async () => {
 
 onMounted(load)
 
-const openTenant = async (row: TenantRow) => {
-  detailLoading.value = true
-  selected.value = null
+const switchTab = async (t: Tab) => {
+  tab.value = t
   try {
-    selected.value = await getTenant(row.id)
+    if (t === 'plans' && !plans.value.length) plans.value = await getPlatformPlans()
+    if (t === 'operators' && !operators.value.length) operators.value = await getOperators()
+    if (t === 'audit') audit.value = await listAudit()
   } catch (e) {
-    error.value = extractApiError(e, 'Could not load tenant')
-  } finally {
-    detailLoading.value = false
+    error.value = extractApiError(e, `Could not load ${t}`)
   }
 }
 
-const closeTenant = () => { selected.value = null }
-
-const setActive = async (active: boolean) => {
-  if (!selected.value) return
-  busy.value = true
-  try {
-    await updateTenant(selected.value.id, { is_active: active })
-    selected.value = await getTenant(selected.value.id)
-    await load()
-  } catch (e) {
-    error.value = extractApiError(e, 'Could not update tenant')
-  } finally {
-    busy.value = false
+const startEditPlan = (p: PlatformPlan) => {
+  editingPlan.value = p.code
+  // The API reports limits under short metric keys ("conversations") while the
+  // editable columns use the long ones ("max_conversations_per_month"). Mapped
+  // by hand rather than derived by string surgery: a rename on either side
+  // should break the build here, not silently produce an undefined the editor
+  // then saves as "unlimited".
+  planDraft.value = {
+    price_cents: p.price_cents,
+    max_conversations_per_month: p.limits.conversations,
+    max_ai_messages_per_month: p.limits.ai_messages,
+    max_agents: p.limits.agents,
+    max_seats: p.limits.seats,
+    max_knowledge_docs: p.limits.knowledge_docs,
   }
 }
 
-const changePlan = async (code: string) => {
-  if (!selected.value || code === selected.value.plan_code) return
+const savePlan = async () => {
+  if (!editingPlan.value) return
   busy.value = true
   try {
-    await updateTenant(selected.value.id, { plan_code: code })
-    selected.value = await getTenant(selected.value.id)
-    await load()
+    // Empty string from a number input means "unlimited", which must be sent
+    // as an explicit null — omitting the key would leave the old limit.
+    const payload: Record<string, number | null> = {}
+    for (const [k, v] of Object.entries(planDraft.value)) {
+      payload[k] = v === null || (v as unknown as string) === '' ? null : Number(v)
+    }
+    const res = await updatePlan(editingPlan.value, payload)
+    plans.value = await getPlatformPlans()
+    editingPlan.value = null
+    if (res?.tenants_affected) {
+      error.value = `Saved. ${res.tenants_affected} tenant(s) are on this plan and are affected immediately.`
+    }
   } catch (e) {
-    error.value = extractApiError(e, 'Could not change plan')
+    error.value = extractApiError(e, 'Could not save plan')
   } finally {
     busy.value = false
   }
@@ -116,7 +144,7 @@ const confirmDelete = async () => {
     await deleteTenant(deleteTarget.value.id, deleteConfirm.value.trim().toLowerCase())
     deleteTarget.value = null
     deleteConfirm.value = ''
-    selected.value = null
+    selectedTenantId.value = null
     await load()
   } catch (e) {
     error.value = extractApiError(e, 'Could not delete tenant')
@@ -125,28 +153,28 @@ const confirmDelete = async () => {
   }
 }
 
-const openAudit = async () => {
-  showAudit.value = true
-  try {
-    audit.value = await listAudit()
-  } catch (e) {
-    error.value = extractApiError(e, 'Could not load the audit trail')
-  }
-}
+const deleteArmed = computed(
+  () => deleteTarget.value !== null &&
+        deleteConfirm.value.trim().toLowerCase() === deleteTarget.value.domain.toLowerCase(),
+)
+
+const plansForDrawer = computed(() => plans.value.filter((p) => p.is_active))
 
 const num = (n: number) => n.toLocaleString()
 const date = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
 const dateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'
+const money = (cents: number, currency: string) =>
+  cents === 0 ? 'Free'
+    : (cents / 100).toLocaleString(undefined, { style: 'currency', currency, maximumFractionDigits: 0 })
 
-const planName = (code: string | null) =>
-  plans.value.find((p) => p.code === code)?.name ?? code ?? 'None'
-
-const deleteArmed = computed(
-  () => deleteTarget.value !== null &&
-        deleteConfirm.value.trim().toLowerCase() === deleteTarget.value.domain.toLowerCase(),
-)
+// Ensure the drawer has a plan list even if the Plans tab was never opened.
+onMounted(async () => {
+  if (!plans.value.length) {
+    try { plans.value = await getPlatformPlans() } catch { /* surfaced on the tab */ }
+  }
+})
 </script>
 
 <template>
@@ -157,23 +185,18 @@ const deleteArmed = computed(
           <h1>Platform console</h1>
           <p class="sub">Every tenant on this deployment</p>
         </div>
-        <div class="head-actions">
-          <button class="btn btn-secondary" @click="openAudit">Audit trail</button>
-          <button class="btn btn-secondary" @click="load" :disabled="loading">Refresh</button>
-        </div>
+        <button class="btn btn-secondary" @click="load" :disabled="loading">Refresh</button>
       </header>
 
-      <div v-if="error" class="alert-error" role="alert">{{ error }}</div>
+      <div v-if="error" class="alert-error" role="alert">
+        {{ error }}
+        <button class="dismiss" @click="error = ''" aria-label="Dismiss">×</button>
+      </div>
 
-      <!-- Headline numbers -->
       <section v-if="stats" class="stat-strip">
         <div class="stat">
           <span class="stat-value">{{ num(stats.organizations.total) }}</span>
           <span class="stat-label">Tenants</span>
-        </div>
-        <div class="stat">
-          <span class="stat-value">{{ num(stats.organizations.active) }}</span>
-          <span class="stat-label">Active</span>
         </div>
         <div class="stat" :class="{ flagged: stats.organizations.suspended > 0 }">
           <span class="stat-value">{{ num(stats.organizations.suspended) }}</span>
@@ -193,52 +216,169 @@ const deleteArmed = computed(
         </div>
       </section>
 
+      <nav class="tabs">
+        <button
+          v-for="t in TABS" :key="t.key"
+          class="tab" :class="{ active: tab === t.key }"
+          @click="switchTab(t.key)"
+        >{{ t.label }}</button>
+      </nav>
+
       <!-- Tenants -->
-      <section class="card card-full">
+      <section v-if="tab === 'tenants'" class="card card-full">
         <div class="table-head">
           <h2>Tenants <span class="count">{{ totalTenants }}</span></h2>
-          <input
-            v-model="search"
-            class="search"
-            type="search"
-            placeholder="Search name or domain…"
-            @keyup.enter="load"
-          />
+          <input v-model="search" class="search" type="search"
+                 placeholder="Search name or domain…" @keyup.enter="loadTenants" />
         </div>
 
         <div v-if="loading" class="empty">Loading…</div>
         <div v-else-if="!tenants.length" class="empty">No tenants match.</div>
-
         <div v-else class="table-scroll">
-          <table class="tenant-table">
+          <table class="grid">
             <thead>
               <tr>
-                <th>Tenant</th>
-                <th>Plan</th>
-                <th class="num">Seats</th>
-                <th class="num">Agents</th>
-                <th class="num">Chats</th>
-                <th class="num">AI replies</th>
-                <th>Joined</th>
-                <th></th>
+                <th>Tenant</th><th>Plan</th>
+                <th class="num">Seats</th><th class="num">Agents</th>
+                <th class="num">Chats</th><th class="num">AI replies</th>
+                <th>Joined</th><th></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="t in tenants" :key="t.id" :class="{ suspended: !t.is_active }">
+              <tr v-for="t in tenants" :key="t.id" :class="{ dim: !t.is_active }">
                 <td>
-                  <div class="tenant-name">
+                  <div class="name">
                     {{ t.name }}
                     <span v-if="!t.is_active" class="pill danger">Suspended</span>
                   </div>
-                  <div class="tenant-domain">{{ t.domain }}</div>
+                  <div class="meta">{{ t.domain }}</div>
                 </td>
-                <td><span class="pill">{{ planName(t.plan_code) }}</span></td>
+                <td><span class="pill">{{ t.plan_code || 'none' }}</span></td>
                 <td class="num">{{ num(t.seats) }}</td>
                 <td class="num">{{ num(t.agents) }}</td>
                 <td class="num">{{ num(t.conversations) }}</td>
                 <td class="num">{{ num(t.ai_messages) }}</td>
-                <td class="muted">{{ date(t.created_at) }}</td>
-                <td><button class="btn btn-ghost btn-sm" @click="openTenant(t)">Manage</button></td>
+                <td class="meta">{{ date(t.created_at) }}</td>
+                <td class="actions">
+                  <button class="btn btn-ghost btn-sm" @click="selectedTenantId = t.id">Manage</button>
+                  <button class="btn btn-ghost btn-sm danger"
+                          @click="deleteTarget = t; deleteConfirm = ''">Delete</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Plans -->
+      <section v-else-if="tab === 'plans'" class="card card-full">
+        <h2>Plans</h2>
+        <p class="note">
+          Limits apply live. Lowering one can put existing tenants over quota
+          immediately — the tenant count shows who is affected. Leave a field
+          empty for unlimited.
+        </p>
+        <div class="table-scroll">
+          <table class="grid">
+            <thead>
+              <tr>
+                <th>Plan</th><th>Price</th>
+                <th v-for="f in LIMIT_FIELDS" :key="f.key" class="num">{{ f.label }}</th>
+                <th class="num">Tenants</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="p in plans" :key="p.code">
+                <tr :class="{ dim: !p.is_active }">
+                  <td>
+                    <div class="name">{{ p.name }}<span v-if="p.is_default" class="pill">default</span></div>
+                    <div class="meta mono">{{ p.code }}</div>
+                  </td>
+                  <td>{{ money(p.price_cents, p.currency) }}</td>
+                  <td class="num">{{ p.limits.conversations ?? '∞' }}</td>
+                  <td class="num">{{ p.limits.ai_messages ?? '∞' }}</td>
+                  <td class="num">{{ p.limits.agents ?? '∞' }}</td>
+                  <td class="num">{{ p.limits.seats ?? '∞' }}</td>
+                  <td class="num">{{ p.limits.knowledge_docs ?? '∞' }}</td>
+                  <td class="num">{{ p.tenant_count }}</td>
+                  <td class="actions">
+                    <button class="btn btn-ghost btn-sm" @click="startEditPlan(p)">Edit</button>
+                  </td>
+                </tr>
+                <tr v-if="editingPlan === p.code" class="edit-row">
+                  <td :colspan="9">
+                    <div class="edit-grid">
+                      <label>
+                        <span>Price (cents)</span>
+                        <input v-model.number="planDraft.price_cents" type="number" min="0" />
+                      </label>
+                      <label v-for="f in LIMIT_FIELDS" :key="f.key">
+                        <span>{{ f.label }}</span>
+                        <input v-model="planDraft[f.key]" type="number" min="0" placeholder="unlimited" />
+                      </label>
+                    </div>
+                    <div class="edit-actions">
+                      <button class="btn btn-secondary btn-sm" @click="editingPlan = null" :disabled="busy">Cancel</button>
+                      <button class="btn btn-primary btn-sm" @click="savePlan" :disabled="busy">
+                        {{ busy ? 'Saving…' : 'Save' }}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Operators -->
+      <section v-else-if="tab === 'operators'" class="card card-full">
+        <h2>Platform operators</h2>
+        <p class="note">
+          Read-only. Granting and revoking require shell access —
+          <code>scripts/grant_platform_admin.py</code> — so a stolen console session
+          cannot quietly add a second operator.
+        </p>
+        <ul class="stack">
+          <li v-for="o in operators" :key="o.id" class="stack-row">
+            <div>
+              <div class="name">{{ o.full_name || o.email }}</div>
+              <div class="meta">
+                {{ o.email }} ·
+                <template v-if="o.tenant">also a member of {{ o.tenant }}</template>
+                <template v-else>standalone (no tenant)</template>
+              </div>
+            </div>
+            <span class="pill" :class="o.is_active ? 'ok' : 'danger'">
+              {{ o.is_active ? 'Active' : 'Disabled' }}
+            </span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- Audit -->
+      <section v-else-if="tab === 'audit'" class="card card-full">
+        <h2>Audit trail</h2>
+        <p class="note">Every action taken across the tenant boundary, newest first.</p>
+        <div v-if="!audit.length" class="empty">Nothing recorded yet.</div>
+        <div v-else class="table-scroll">
+          <table class="grid">
+            <thead>
+              <tr><th>When</th><th>Operator</th><th>Action</th><th>Tenant</th><th>Detail</th><th>IP</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="a in audit" :key="a.id">
+                <td class="meta">{{ dateTime(a.created_at) }}</td>
+                <td>{{ a.actor_email }}</td>
+                <td>
+                  <span class="pill" :class="{
+                    danger: a.action.endsWith('delete'),
+                    warn: a.action === 'conversation.read',
+                  }">{{ a.action }}</span>
+                </td>
+                <td>{{ a.target_organization_domain || '—' }}</td>
+                <td class="meta detail">{{ JSON.stringify(a.details) }}</td>
+                <td class="meta">{{ a.ip_address || '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -246,140 +386,29 @@ const deleteArmed = computed(
       </section>
     </div>
 
-    <!-- Tenant detail -->
-    <div v-if="selected || detailLoading" class="drawer-backdrop" @click.self="closeTenant">
-      <aside class="drawer">
-        <div v-if="detailLoading" class="empty">Loading…</div>
-        <template v-else-if="selected">
-          <header class="drawer-head">
-            <div>
-              <h2>{{ selected.name }}</h2>
-              <p class="sub">{{ selected.domain }}</p>
-            </div>
-            <button class="close" @click="closeTenant" aria-label="Close">×</button>
-          </header>
-
-          <div class="drawer-body">
-            <div class="field-row">
-              <span class="field-label">Status</span>
-              <span class="pill" :class="selected.is_active ? 'ok' : 'danger'">
-                {{ selected.is_active ? 'Active' : 'Suspended' }}
-              </span>
-            </div>
-            <div class="field-row">
-              <span class="field-label">Joined</span>
-              <span>{{ date(selected.created_at) }}</span>
-            </div>
-
-            <h3>Plan</h3>
-            <div class="plan-picker">
-              <button
-                v-for="p in plans"
-                :key="p.code"
-                class="plan-chip"
-                :class="{ active: p.code === selected.plan_code }"
-                :disabled="busy"
-                @click="changePlan(p.code)"
-              >{{ p.name }}</button>
-            </div>
-
-            <h3>Usage this month</h3>
-            <ul class="usage-list">
-              <li v-for="(m, key) in selected.usage.metrics" :key="key">
-                <span class="usage-key">{{ String(key).replace(/_/g, ' ') }}</span>
-                <span class="usage-val" :class="{ over: m.exceeded }">
-                  {{ num(m.used) }}<span class="of"> / {{ m.limit === null ? '∞' : num(m.limit) }}</span>
-                </span>
-              </li>
-            </ul>
-
-            <h3>People <span class="count">{{ selected.users.length }}</span></h3>
-            <ul class="user-list">
-              <li v-for="u in selected.users" :key="u.id">
-                <div>
-                  <div class="user-email">{{ u.email }}</div>
-                  <div class="user-meta">
-                    {{ u.role || 'no role' }}
-                    <template v-if="!u.is_email_verified"> · unverified</template>
-                    <template v-if="!u.is_active"> · deactivated</template>
-                  </div>
-                </div>
-              </li>
-            </ul>
-
-            <!-- Conversation content is deliberately absent. The console
-                 answers support questions about an account, not what that
-                 account's customers said. -->
-            <p class="privacy-note">
-              Conversation content is not accessible from this console.
-            </p>
-          </div>
-
-          <footer class="drawer-foot">
-            <button
-              v-if="selected.is_active"
-              class="btn btn-secondary" :disabled="busy"
-              @click="setActive(false)"
-            >Suspend</button>
-            <button
-              v-else
-              class="btn btn-primary" :disabled="busy"
-              @click="setActive(true)"
-            >Reactivate</button>
-            <button
-              class="btn btn-danger" :disabled="busy"
-              @click="deleteTarget = selected; deleteConfirm = ''"
-            >Delete…</button>
-          </footer>
-        </template>
-      </aside>
-    </div>
+    <TenantDrawer
+      v-if="selectedTenantId"
+      :tenant-id="selectedTenantId"
+      :plans="plansForDrawer"
+      @close="selectedTenantId = null"
+      @changed="load"
+    />
 
     <!-- Delete confirmation -->
     <div v-if="deleteTarget" class="modal-backdrop">
       <div class="modal">
         <h2>Delete {{ deleteTarget.name }}?</h2>
-        <p class="danger-copy">
+        <p class="modal-copy">
           This permanently removes every agent, conversation, document and user
           belonging to <strong>{{ deleteTarget.domain }}</strong>. It cannot be undone.
         </p>
-        <label class="confirm-label" for="confirmDomain">
-          Type <code>{{ deleteTarget.domain }}</code> to confirm
-        </label>
-        <input id="confirmDomain" v-model="deleteConfirm" class="confirm-input" autocomplete="off" />
+        <label class="confirm-label" for="cd">Type <code>{{ deleteTarget.domain }}</code> to confirm</label>
+        <input id="cd" v-model="deleteConfirm" class="confirm-input" autocomplete="off" />
         <div class="modal-actions">
           <button class="btn btn-secondary" @click="deleteTarget = null" :disabled="busy">Cancel</button>
           <button class="btn btn-danger" :disabled="!deleteArmed || busy" @click="confirmDelete">
             {{ busy ? 'Deleting…' : 'Delete permanently' }}
           </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Audit trail -->
-    <div v-if="showAudit" class="modal-backdrop" @click.self="showAudit = false">
-      <div class="modal wide">
-        <header class="modal-head">
-          <h2>Operator audit trail</h2>
-          <button class="close" @click="showAudit = false" aria-label="Close">×</button>
-        </header>
-        <p class="sub">Every action taken across the tenant boundary.</p>
-        <div v-if="!audit.length" class="empty">Nothing recorded yet.</div>
-        <div v-else class="table-scroll audit-scroll">
-          <table class="tenant-table">
-            <thead>
-              <tr><th>When</th><th>Operator</th><th>Action</th><th>Tenant</th><th>IP</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="a in audit" :key="a.id">
-                <td class="muted">{{ dateTime(a.created_at) }}</td>
-                <td>{{ a.actor_email }}</td>
-                <td><span class="pill" :class="{ danger: a.action.endsWith('delete') }">{{ a.action }}</span></td>
-                <td>{{ a.target_organization_domain || '—' }}</td>
-                <td class="muted">{{ a.ip_address || '—' }}</td>
-              </tr>
-            </tbody>
-          </table>
         </div>
       </div>
     </div>
@@ -412,9 +441,12 @@ const deleteArmed = computed(
 }
 
 .sub { color: var(--muted); font-size: var(--text-sm); margin: 0; }
-.head-actions { display: flex; gap: var(--space-sm); }
 
 .alert-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
   color: var(--error-color);
   background: var(--error-bg);
   border: 1px solid color-mix(in srgb, var(--error-color) 25%, transparent);
@@ -423,10 +455,14 @@ const deleteArmed = computed(
   font-size: var(--text-sm);
 }
 
-/* Stat strip */
+.dismiss {
+  background: none; border: none; color: inherit;
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 0;
+}
+
 .stat-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--space-md);
 }
 
@@ -448,39 +484,55 @@ const deleteArmed = computed(
   font-variant-numeric: tabular-nums;
 }
 
-.stat-label {
-  display: block;
-  font-size: var(--text-xs);
+.stat-label { display: block; font-size: var(--text-xs); color: var(--muted2); margin-top: var(--space-xs); }
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--o08); overflow-x: auto; }
+
+.tab {
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+  padding: var(--space-md);
   color: var(--muted2);
-  margin-top: var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-/* Table */
-.table-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  margin-bottom: var(--space-lg);
-  flex-wrap: wrap;
-}
+.tab:hover { color: var(--text3); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent-solid); font-weight: 600; }
 
-.table-head h2 {
+.card h2 {
   font-family: var(--font-display);
   font-size: var(--text-lg);
   color: var(--text);
-  margin: 0;
+  margin: 0 0 var(--space-sm);
+}
+
+.note {
+  font-size: var(--text-xs);
+  color: var(--muted2);
+  line-height: 1.55;
+  margin: 0 0 var(--space-lg);
+  max-width: 70ch;
+}
+
+.note code {
+  font-family: var(--font-mono);
+  background: var(--o08);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+}
+
+.table-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-md); margin-bottom: var(--space-lg); flex-wrap: wrap;
 }
 
 .count {
-  font-size: var(--text-xs);
-  color: var(--muted2);
-  background: var(--o08);
-  border-radius: var(--radius-pill);
-  padding: 2px 8px;
-  margin-left: var(--space-xs);
-  font-family: var(--font-sans);
-  font-weight: 500;
+  font-size: var(--text-xs); color: var(--muted2);
+  background: var(--o08); border-radius: var(--radius-pill);
+  padding: 2px 8px; margin-left: var(--space-xs); font-weight: 500;
 }
 
 .search {
@@ -493,22 +545,13 @@ const deleteArmed = computed(
   font-size: var(--text-sm);
   min-width: 220px;
 }
+.search:focus { outline: none; border-color: var(--accent-ink); }
 
-.search:focus {
-  outline: none;
-  border-color: var(--accent-ink);
-}
-
-/* Wide tables scroll inside their own container so the page never does */
 .table-scroll { overflow-x: auto; }
 
-.tenant-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--text-sm);
-}
+.grid { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 
-.tenant-table th {
+.grid th {
   text-align: left;
   font-size: var(--text-xs);
   text-transform: uppercase;
@@ -519,185 +562,68 @@ const deleteArmed = computed(
   white-space: nowrap;
 }
 
-.tenant-table td {
-  padding: var(--space-md);
-  border-top: 1px solid var(--o06);
-  color: var(--text3);
-  vertical-align: middle;
-}
+.grid td { padding: var(--space-md); border-top: 1px solid var(--o06); color: var(--text3); vertical-align: middle; }
+.grid .num { text-align: right; font-variant-numeric: tabular-nums; }
+.grid tr.dim { opacity: 0.55; }
 
-.tenant-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.tenant-table tr.suspended { opacity: 0.6; }
+.name { color: var(--text); font-weight: 600; display: flex; align-items: center; gap: var(--space-sm); }
+.meta { font-size: var(--text-xs); color: var(--muted2); margin-top: 2px; }
+.meta.mono { font-family: var(--font-mono); }
+.detail { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.tenant-name {
-  color: var(--text);
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.tenant-domain { font-size: var(--text-xs); color: var(--muted2); margin-top: 2px; }
-.muted { color: var(--muted2); }
+.actions { display: flex; gap: var(--space-xs); justify-content: flex-end; }
+.btn-sm { padding: 5px 12px; font-size: var(--text-xs); }
+.btn-ghost.danger { color: var(--error-color); }
 
 .pill {
-  display: inline-block;
-  font-size: var(--text-xs);
-  padding: 2px 9px;
-  border-radius: var(--radius-pill);
-  background: var(--o08);
-  color: var(--text3);
-  white-space: nowrap;
+  display: inline-block; font-size: var(--text-xs);
+  padding: 2px 9px; border-radius: var(--radius-pill);
+  background: var(--o08); color: var(--text3); white-space: nowrap;
 }
-
 .pill.ok { background: var(--success-bg); color: var(--success-color); }
 .pill.danger { background: var(--error-bg); color: var(--error-color); }
+.pill.warn { background: var(--warning-bg); color: var(--warning-color); }
 
-.btn-sm { padding: 5px 12px; font-size: var(--text-xs); }
 .empty { color: var(--muted2); font-size: var(--text-sm); padding: var(--space-lg) 0; }
 
-/* Drawer */
-.drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(5, 6, 9, 0.6);
-  backdrop-filter: blur(3px);
-  z-index: 900;
-  display: flex;
-  justify-content: flex-end;
+.stack { list-style: none; margin: 0; padding: 0; }
+.stack-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-md); padding: var(--space-md) 0; border-top: 1px solid var(--o06);
 }
 
-.drawer {
-  width: min(460px, 100%);
+/* Plan editor */
+.edit-row td { background: var(--o04); }
+
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-md);
+}
+
+.edit-grid label { display: flex; flex-direction: column; gap: var(--space-xs); }
+.edit-grid span { font-size: var(--text-xs); color: var(--muted2); }
+
+.edit-grid input {
+  padding: 8px 12px;
   background: var(--surface);
-  border-left: 1px solid var(--o10);
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.drawer-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: var(--space-lg);
-  border-bottom: 1px solid var(--o08);
-}
-
-.drawer-head h2 {
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  color: var(--text);
-  margin: 0 0 2px;
-}
-
-.close {
-  background: none;
   border: 1px solid var(--o12);
   border-radius: var(--radius-md);
-  width: 30px;
-  height: 30px;
-  color: var(--muted2);
-  font-size: 18px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.close:hover { background: var(--o06); color: var(--text); }
-
-.drawer-body {
-  padding: var(--space-lg);
-  overflow-y: auto;
-  flex: 1;
-}
-
-.drawer-body h3 {
-  font-family: var(--font-display);
-  font-size: var(--text-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted2);
-  margin: var(--space-xl) 0 var(--space-md);
-}
-
-.field-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--space-sm) 0;
-  font-size: var(--text-sm);
-  color: var(--text3);
-}
-
-.field-label { color: var(--muted2); }
-
-.plan-picker { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
-
-.plan-chip {
-  padding: 7px 14px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--o12);
-  background: transparent;
-  color: var(--text3);
+  color: var(--text);
   font-family: var(--font-sans);
   font-size: var(--text-sm);
-  cursor: pointer;
-  transition: 0.18s;
 }
+.edit-grid input:focus { outline: none; border-color: var(--accent-ink); }
 
-.plan-chip:hover:not(:disabled) { border-color: var(--accent-border); color: var(--text); }
-.plan-chip.active { background: var(--accent-solid); border-color: var(--accent-solid); color: #0B0C10; font-weight: 600; }
-.plan-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.edit-actions { display: flex; gap: var(--space-sm); justify-content: flex-end; margin-top: var(--space-md); }
 
-.usage-list, .user-list { list-style: none; margin: 0; padding: 0; }
-
-.usage-list li {
-  display: flex;
-  justify-content: space-between;
-  padding: var(--space-sm) 0;
-  border-bottom: 1px solid var(--o06);
-  font-size: var(--text-sm);
-}
-
-.usage-key { color: var(--muted); text-transform: capitalize; }
-.usage-val { color: var(--text); font-variant-numeric: tabular-nums; }
-.usage-val.over { color: var(--error-color); font-weight: 600; }
-.usage-val .of { color: var(--muted2); }
-
-.user-list li { padding: var(--space-sm) 0; border-bottom: 1px solid var(--o06); }
-.user-email { font-size: var(--text-sm); color: var(--text2); }
-.user-meta { font-size: var(--text-xs); color: var(--muted2); margin-top: 2px; }
-
-.privacy-note {
-  margin-top: var(--space-xl);
-  padding: var(--space-md);
-  background: var(--o04);
-  border: 1px solid var(--o08);
-  border-radius: var(--radius-md);
-  font-size: var(--text-xs);
-  color: var(--muted2);
-}
-
-.drawer-foot {
-  display: flex;
-  gap: var(--space-sm);
-  padding: var(--space-lg);
-  border-top: 1px solid var(--o08);
-}
-
-.drawer-foot .btn { flex: 1; }
-
-/* Modals */
+/* Delete modal */
 .modal-backdrop {
-  position: fixed;
-  inset: 0;
+  position: fixed; inset: 0;
   background: rgba(5, 6, 9, 0.72);
   backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: var(--space-md);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: var(--space-md);
 }
 
 .modal {
@@ -705,79 +631,29 @@ const deleteArmed = computed(
   border: 1px solid var(--o10);
   border-radius: var(--radius-card-lg);
   padding: var(--space-xl);
-  width: 100%;
-  max-width: 440px;
-  max-height: 88vh;
-  overflow-y: auto;
+  width: 100%; max-width: 440px;
 }
 
-.modal.wide { max-width: 860px; }
+.modal h2 { font-family: var(--font-display); font-size: var(--text-xl); color: var(--text); margin: 0 0 var(--space-md); }
+.modal-copy { color: var(--muted); font-size: var(--text-sm); line-height: 1.6; margin: 0 0 var(--space-lg); }
+.modal-copy strong { color: var(--text); }
 
-.modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-}
-
-.modal h2 {
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  color: var(--text);
-  margin: 0 0 var(--space-md);
-}
-
-.modal-head h2 { margin-bottom: 0; }
-
-.danger-copy {
-  color: var(--muted);
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  margin: 0 0 var(--space-lg);
-}
-
-.danger-copy strong { color: var(--text); }
-
-.confirm-label {
-  display: block;
-  font-size: var(--text-sm);
-  color: var(--text3);
-  margin-bottom: var(--space-sm);
-}
-
+.confirm-label { display: block; font-size: var(--text-sm); color: var(--text3); margin-bottom: var(--space-sm); }
 .confirm-label code {
-  background: var(--o08);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  color: var(--accent-ink);
-  font-family: var(--font-mono);
+  background: var(--o08); padding: 1px 6px; border-radius: var(--radius-sm);
+  color: var(--accent-ink); font-family: var(--font-mono);
 }
 
 .confirm-input {
-  width: 100%;
-  padding: 12px 14px;
-  background: var(--o04);
-  border: 1px solid var(--o12);
-  border-radius: var(--radius-input);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  width: 100%; padding: 12px 14px;
+  background: var(--o04); border: 1px solid var(--o12);
+  border-radius: var(--radius-input); color: var(--text);
+  font-family: var(--font-mono); font-size: var(--text-sm);
 }
-
 .confirm-input:focus { outline: none; border-color: var(--error-color); }
 
-.modal-actions {
-  display: flex;
-  gap: var(--space-sm);
-  margin-top: var(--space-lg);
-}
-
+.modal-actions { display: flex; gap: var(--space-sm); margin-top: var(--space-lg); }
 .modal-actions .btn { flex: 1; }
 
-.audit-scroll { max-height: 60vh; overflow-y: auto; margin-top: var(--space-md); }
-
-@media (max-width: 640px) {
-  .drawer { width: 100%; }
-  .console { padding: var(--space-md); }
-}
+@media (max-width: 640px) { .console { padding: var(--space-md); } }
 </style>

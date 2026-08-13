@@ -22,7 +22,7 @@ revoked rather than at the next login.
 */
 
 import api from '@/services/api'
-import type { UsageSummary } from '@/services/usage'
+import type { Plan, UsageSummary } from '@/services/usage'
 
 export interface PlatformStats {
   period: string
@@ -131,3 +131,121 @@ export const isPlatformAdmin = async (): Promise<boolean> => {
     return false
   }
 }
+
+// ── Client operations ───────────────────────────────────────────────────────
+
+export interface TenantAgent {
+  id: string
+  name: string
+  display_name: string | null
+  description: string | null
+  agent_type: string | null
+  is_active: boolean
+  transfer_to_human: boolean
+  use_workflow: boolean
+  /** Count, not content — the tenant's prompts are their own work. */
+  instruction_count: number
+}
+
+export interface KnowledgeSource {
+  id: number
+  source: string
+  source_type: string | null
+  created_at: string | null
+}
+
+export interface TenantIntegrations {
+  channels: {
+    id: string
+    channel_type: string
+    display_name: string | null
+    is_active: boolean
+    created_at: string | null
+  }[]
+  widgets: { id: string; name: string; agent_id: string | null }[]
+}
+
+export interface ConversationRow {
+  session_id: string
+  status: string | null
+  channel: string
+  customer: { email: string | null; full_name: string | null } | null
+  agent_name: string | null
+  message_count: number
+  sentiment: string | null
+  assigned_at: string | null
+  updated_at: string | null
+}
+
+export interface TranscriptMessage {
+  id: number
+  message_type: string
+  message: string
+  created_at: string | null
+  sentiment_label: string | null
+}
+
+export interface Transcript {
+  session_id: string
+  organization_domain: string
+  status: string | null
+  channel: string
+  customer: { email: string | null; full_name: string | null } | null
+  messages: TranscriptMessage[]
+}
+
+export interface PlatformPlan extends Plan {
+  tenant_count: number
+}
+
+export interface Operator {
+  id: string
+  email: string
+  full_name: string
+  is_active: boolean
+  /** null for a standalone operator that belongs to no tenant. */
+  tenant: string | null
+  created_at: string | null
+}
+
+export const getTenantAgents = async (id: string): Promise<TenantAgent[]> =>
+  (await api.get<TenantAgent[]>(`/platform/tenants/${id}/agents`)).data
+
+export const getTenantKnowledge = async (
+  id: string,
+): Promise<{ total: number; sources: KnowledgeSource[] }> =>
+  (await api.get(`/platform/tenants/${id}/knowledge`)).data
+
+export const getTenantIntegrations = async (id: string): Promise<TenantIntegrations> =>
+  (await api.get<TenantIntegrations>(`/platform/tenants/${id}/integrations`)).data
+
+export const getTenantConversations = async (
+  id: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<{ total: number; limit: number; offset: number; conversations: ConversationRow[] }> =>
+  (await api.get(`/platform/tenants/${id}/conversations`, { params })).data
+
+/**
+ * Open one conversation.
+ *
+ * Every call writes a `conversation.read` row to the platform audit log naming
+ * the operator, the tenant and the customer. That is intentional and cannot be
+ * skipped — it is the control that makes transcript access accountable rather
+ * than merely available.
+ */
+export const getTranscript = async (id: string, sessionId: string): Promise<Transcript> =>
+  (await api.get<Transcript>(`/platform/tenants/${id}/conversations/${sessionId}`)).data
+
+export const updateTenantUser = async (
+  userId: string,
+  changes: { is_active?: boolean; new_password?: string },
+) => (await api.patch(`/platform/users/${userId}`, changes)).data
+
+export const getPlatformPlans = async (): Promise<PlatformPlan[]> =>
+  (await api.get<PlatformPlan[]>('/platform/plans')).data
+
+export const updatePlan = async (code: string, changes: Record<string, unknown>) =>
+  (await api.patch(`/platform/plans/${code}`, changes)).data
+
+export const getOperators = async (): Promise<Operator[]> =>
+  (await api.get<Operator[]>('/platform/operators')).data

@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 import { canAccessPath } from '@/router/routePermissions'
+import { userService } from '@/services/user'
 
 /**
  * Where to send someone who has not asked for a particular page: after login,
@@ -47,5 +48,15 @@ const LANDING_CANDIDATES = [
  * from localStorage, which is empty when the router module is first evaluated.
  */
 export function resolveLandingRoute(): string {
+  // A standalone platform operator has no workspace, so every candidate below
+  // is a page about an organization they do not belong to — each would load
+  // and then fail its first API call. Send them to the console instead.
+  //
+  // Keyed on the absence of an organization, not on is_platform_admin: an
+  // operator promoted from a tenant account still has a real workspace and
+  // should still land in it, with the console one click away in the nav.
+  const user = userService.getCurrentUser()
+  if (user?.is_platform_admin && !user?.organization_id) return '/platform'
+
   return LANDING_CANDIDATES.find(canAccessPath) ?? '/settings/user'
 }

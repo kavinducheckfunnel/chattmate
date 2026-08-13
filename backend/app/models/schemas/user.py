@@ -121,6 +121,12 @@ class UserResponse(UserBase):
     last_seen: Optional[datetime] = None
     profile_pic: Optional[str] = None
     is_active: Optional[bool] = None
+    is_email_verified: Optional[bool] = None
+    # Read-only in practice: this is a response model, and the flag is writable
+    # only by scripts/grant_platform_admin.py on the server. Declared here
+    # purely so the login response can carry it — Pydantic silently strips any
+    # field the model does not declare.
+    is_platform_admin: Optional[bool] = None
     groups: Optional[List[UserGroupResponse]] = None    
     role: Optional[RoleResponse] = None
 

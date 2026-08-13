@@ -92,10 +92,11 @@ jobs:
             grep -rn 'is_platform_admin' backend/app/api/ | grep -vE 'platform_admin\.py'
             fail=1
           fi
-          if grep -rn 'is_platform_admin' backend/app/models/schemas/ 2>/dev/null | grep -q .; then
-            echo "::error::is_platform_admin appears in a request/response schema; it must never be settable over HTTP"
-            fail=1
-          fi
+          # A grep is too blunt here: the field legitimately appears in
+          # UserResponse so the SPA can decide whether to draw the console
+          # link. The violation is it appearing in a model FastAPI parses a
+          # request body into, which this AST check distinguishes.
+          python3 scripts/check_platform_admin_boundary.py || fail=1
           [ "$fail" = 0 ] && echo "OK: platform-admin boundary intact"
           exit $fail
 

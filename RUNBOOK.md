@@ -360,6 +360,89 @@ These are **not** done yet and matter before real customers:
 
 ---
 
+## Platform operator console
+
+**https://chat.growmiq.io/platform** — cross-tenant operations.
+
+Two kinds of operator account:
+
+| | Standalone | Promoted tenant user |
+|---|---|---|
+| Created by | `scripts/create_platform_admin.py` | `scripts/grant_platform_admin.py --grant` |
+| Belongs to a tenant | No (`organization_id` is NULL) | Yes, keeps their workspace |
+| Can use tenant features | No — every tenant route 403s | Yes, as normal |
+| Lands after login on | `/platform` | their usual dashboard |
+
+Prefer standalone for day-to-day operations. A promoted account wears two hats:
+its actions inside its own workspace are indistinguishable from ordinary use,
+and deleting that workspace would delete the operator account with it.
+
+```bash
+# create a standalone operator (password generated and printed once)
+docker exec -i chattermate-backend-1 python - \
+    --email ops@growmiq.io --name "Ops" \
+  < /opt/chattermate/scripts/create_platform_admin.py
+
+# list / promote / demote
+docker exec -i chattermate-backend-1 python - --list \
+  < /opt/chattermate/scripts/grant_platform_admin.py
+```
+
+Granting is shell-only by design — there is no API for it, so operator access
+cannot be obtained through a request someone can be tricked into making. The
+script refuses to revoke the last operator.
+
+### Why not the `super_admin` permission
+
+`super_admin` is **organization-scoped and self-grantable**: any tenant admin
+can `POST /roles/{their_own_role}/permissions/super_admin`. Keying platform
+access off it would hand every customer's admin the keys to every other
+customer. Platform access is `users.is_platform_admin`, a column no API writes.
+`scripts/check_platform_admin_boundary.py` fails the build if that field ever
+appears in a request model; CI also rejects any `super_admin` permission check
+inside `platform_admin.py`.
+
+### What the console can do
+
+Tenants (search, usage, suspend/reactivate, change plan, delete), plan catalog
+editing, cross-tenant user management (deactivate, reset password), and
+per-tenant inspection: agents, knowledge sources, channels and widgets,
+conversations and full transcripts.
+
+### What it deliberately cannot do
+
+- **Channel credentials and webhook secrets are never returned** — not even
+  masked. An operator who could read them could impersonate the tenant on
+  WhatsApp or Slack.
+- **Agent instructions are counted, not exposed.** A tenant's prompts are their
+  product.
+- **No endpoint writes a message** or lets an operator appear to a customer as
+  the tenant. Transcript access is read-only.
+- **Operator accounts cannot be edited through the tenant-user route**, so one
+  operator cannot reset another's password and take over the platform.
+
+### Transcript access is audited individually
+
+Opening a conversation writes a `conversation.read` audit row naming the
+operator, tenant, session, customer email and message count — the pattern
+Intercom and Zendesk use for admin access. The conversation *list* is not
+audited per call, deliberately: auditing every scroll would bury the entries
+that matter under routine ones. The reader is told in the UI that the record
+exists.
+
+Review it under **Audit**, or:
+
+```sql
+SELECT created_at, actor_email, action, target_organization_domain, details
+FROM platform_audit_log ORDER BY created_at DESC LIMIT 50;
+```
+
+Audit rows survive the tenant they describe: both foreign keys are ON DELETE
+SET NULL and the domain is denormalised, so deleting a customer does not erase
+the record of having deleted them.
+
+---
+
 ## Domain history
 
 The site moved from `chattermate.growmiq.io` to **`chat.growmiq.io`** on 12 Aug 2026.

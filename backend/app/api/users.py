@@ -539,7 +539,14 @@ async def login(
         role = db.query(Role).filter(Role.id == user.role_id).first()
 
         # Generate tokens
-        token_data = {"sub": str(user.id), "org": str(user.organization_id)}
+        # A standalone platform operator belongs to no tenant, so str(None)
+        # would put the literal "None" in the token and the cookie — a value
+        # that reads as a real organization id to anything doing a string
+        # comparison. Emit null instead.
+        token_data = {
+            "sub": str(user.id),
+            "org": str(user.organization_id) if user.organization_id else None,
+        }
         access_token = create_access_token(token_data)
         refresh_token = create_refresh_token(token_data)
 
@@ -566,7 +573,12 @@ async def login(
             "id": str(user.id),
             "email": user.email,
             "full_name": user.full_name,
-            "organization_id": str(user.organization_id),
+            "organization_id": (
+                str(user.organization_id) if user.organization_id else None
+            ),
+            # Platform operators have no workspace of their own; the SPA uses
+            # this to send them to the console instead of a tenant dashboard.
+            "is_platform_admin": user.is_platform_admin,
             # Lets the SPA show the "verify your address" prompt without an
             # extra round trip per page load. Sessions predating this field
             # omit it, and the client treats absent as verified, so existing
@@ -648,6 +660,10 @@ async def login(
                 "is_online": user.is_online,
                 "last_seen": user.last_seen,
                 "is_active": user.is_active,
+                # The SPA stores this response, not the user_info cookie, so
+                # the flag has to be here or the console link and the
+                # post-login redirect for a standalone operator never fire.
+                "is_platform_admin": user.is_platform_admin,
                 "role": role.to_dict() if role else None
             }
         }
@@ -724,8 +740,13 @@ async def refresh_token(
 
         role = db.query(Role).filter(Role.id == user.role_id).first()
   
-        # Generate new tokens
-        token_data = {"sub": str(user_id), "org": str(org_id)}
+        # Generate new tokens. org_id comes off the previous token, so it is
+        # already None for a standalone operator; guard the str() anyway so a
+        # refresh cannot reintroduce the literal "None" that login avoids.
+        token_data = {
+            "sub": str(user_id),
+            "org": str(org_id) if org_id else None,
+        }
         access_token = create_access_token(token_data)
         refresh_token = create_refresh_token(token_data)
 
@@ -752,7 +773,12 @@ async def refresh_token(
             "id": str(user.id),
             "email": user.email,
             "full_name": user.full_name,
-            "organization_id": str(user.organization_id),
+            "organization_id": (
+                str(user.organization_id) if user.organization_id else None
+            ),
+            # Platform operators have no workspace of their own; the SPA uses
+            # this to send them to the console instead of a tenant dashboard.
+            "is_platform_admin": user.is_platform_admin,
             # Lets the SPA show the "verify your address" prompt without an
             # extra round trip per page load. Sessions predating this field
             # omit it, and the client treats absent as verified, so existing
@@ -781,6 +807,10 @@ async def refresh_token(
                 "is_online": user.is_online,
                 "last_seen": user.last_seen,
                 "is_active": user.is_active,
+                # The SPA stores this response, not the user_info cookie, so
+                # the flag has to be here or the console link and the
+                # post-login redirect for a standalone operator never fire.
+                "is_platform_admin": user.is_platform_admin,
                 "role": role.to_dict() if role else None
             }
         }

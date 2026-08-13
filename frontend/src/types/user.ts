@@ -62,6 +62,11 @@ export interface User {
    * they have been receiving mail at for weeks.
    */
   is_email_verified?: boolean
+  /**
+   * Platform operator. A standalone operator additionally has no
+   * organization_id — they belong to no tenant and can only use the console.
+   */
+  is_platform_admin?: boolean
   groups?: UserGroup[]
   role?: Role
   created_at?: string
