@@ -18,6 +18,8 @@ from app.database import Base
 from .organization import Organization
 from .user import User
 from .auth_token import AuthToken, TokenPurpose
+from .plan import Plan
+from .usage import UsageCounter, current_period
 from .customer import Customer
 from .role import Role
 from .permission import Permission
@@ -76,6 +78,9 @@ __all__ = [
     "User",
     "AuthToken",
     "TokenPurpose",
+    "Plan",
+    "UsageCounter",
+    "current_period",
     "Customer",
     "Permission",
     "Role",

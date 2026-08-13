@@ -211,6 +211,14 @@ const baseRoutes = [
     },
   },
   {
+    // Usage is readable by any member: an agent who hits a quota wall needs to
+    // see why, and hiding the number turns a clear limit into a mystery.
+    path: '/settings/usage',
+    name: 'usage-settings',
+    component: () => import('@/views/settings/UsageSettings.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/settings/user',
     name: 'user-settings',
     component: UserSettingsView,

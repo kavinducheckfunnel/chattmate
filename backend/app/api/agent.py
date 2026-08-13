@@ -43,6 +43,7 @@ from uuid import UUID
 from app.core.s3 import upload_file_to_s3
 from app.core.config import settings
 from app.services.file_storage import local_upload_path
+from app.services import usage as usage_service
 from pydantic import BaseModel
 from agno.agent import Agent as AgnoAgent
 from app.utils.agno_utils import create_model
@@ -169,7 +170,10 @@ async def create_agent(
                     detail=f"Cannot create agent: Maximum number of agents ({subscription.plan.max_agents}) exceeded for current plan , please upgrade your plan"
                 )
 
-        
+        # Agent quota. The enterprise block above is inert without that module,
+        # so on this deployment nothing capped agent creation at all.
+        usage_service.check(db, current_user.organization, "agents")
+
         # Check if agent with the same name already exists in the organization
         existing_agent = agent_repo.get_by_name(agent_data.name, current_user.organization_id)
         if existing_agent:

@@ -21,7 +21,7 @@ os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_apps, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, token, lead_capture, people, tickets, account_auth
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_apps, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, token, lead_capture, people, tickets, account_auth, usage
 from app.api import help_center as help_center_api
 from app.api import help_center_images
 from app.api import channels as channels_api
@@ -169,6 +169,12 @@ app.include_router(
     account_auth.router,
     prefix=f"{settings.API_V1_STR}/auth",
     tags=["auth"]
+)
+
+app.include_router(
+    usage.router,
+    prefix=f"{settings.API_V1_STR}/usage",
+    tags=["usage"]
 )
 
 app.include_router(

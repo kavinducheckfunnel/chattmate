@@ -142,6 +142,30 @@ class ChatRepository:
                 except Exception as e:
                     logger.error(f"Error updating session sentiment: {str(e)}")
 
+            # Meter AI replies. Only 'bot' messages count: a human agent typing
+            # in the inbox costs no model tokens, and billing a tenant for their
+            # own staff's replies would be wrong.
+            #
+            # Metered here rather than at the API layer because every channel —
+            # web widget, WhatsApp, Slack, email — funnels through this method.
+            # A per-endpoint hook would have to be added to each one and would
+            # be missed by the next channel added.
+            #
+            # Deliberately after the commit and deliberately swallowing errors:
+            # the message is already delivered to a customer at this point, and
+            # a metering failure must never turn a successful reply into a 500.
+            # Under-counting is a billing discrepancy; raising here is an outage.
+            if message_data.get('message_type') == 'bot' and message_data.get('organization_id'):
+                try:
+                    from app.services import usage as usage_service
+                    usage_service.record(
+                        self.db, message_data['organization_id'], 'ai_messages'
+                    )
+                    self.db.commit()
+                except Exception as e:
+                    logger.error(f"Error recording ai_messages usage: {str(e)}")
+                    self.db.rollback()
+
             return message
         except Exception as e:
             logger.error(f"Error creating message: {str(e)}")

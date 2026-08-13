@@ -90,6 +90,19 @@ class SessionToAgent(Base):
     ratings = relationship("Rating", back_populates="session_assignments")
     workflow = relationship("Workflow", back_populates="sessions")
     current_node = relationship("WorkflowNode")
+    # chat_history.session_id is a plain FK with no ON DELETE clause, so the
+    # database refuses to remove a session while any message still points at it.
+    # Nothing declared what should happen to those messages, which made every
+    # session with a transcript — i.e. every real one — undeletable, and with it
+    # the customer and the whole organization above it.
+    #
+    # Deleting the messages with the session is also the correct answer on its
+    # own terms: a transcript detached from its conversation is unreadable, and
+    # a closed account's conversations should not outlive it.
+    chat_histories = relationship(
+        "ChatHistory", back_populates="session_assignment",
+        cascade="all, delete-orphan",
+    )
 
 
 # Add back-reference in UserGroup model if not already present

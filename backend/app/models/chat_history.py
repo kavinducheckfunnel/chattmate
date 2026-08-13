@@ -58,5 +58,7 @@ class ChatHistory(Base):
     customer = relationship("Customer", back_populates="chat_histories")
     agent = relationship("Agent", back_populates="chat_histories")
     organization = relationship("Organization", back_populates="chat_histories")
-    session_assignment = relationship("SessionToAgent")
+    session_assignment = relationship(
+        "SessionToAgent", back_populates="chat_histories"
+    )
 

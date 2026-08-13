@@ -36,6 +36,7 @@ from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.core.config import settings
 from app.services import knowledge_vector_links
+from app.services import usage as usage_service
 from sqlalchemy.orm import Session
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
 from app.core.file_validation import read_validated, safe_filename, PDF_MAGIC
@@ -187,6 +188,11 @@ async def upload_pdf_files(
             raise HTTPException(status_code=400, detail="Invalid org_id")
         if current_user.organization_id != org_uuid:
             raise HTTPException(status_code=403, detail="Unauthorized access to organization")
+
+        # One knowledge source per uploaded file, so charge the whole batch at
+        # once. Checking one at a time would let a large upload cross the limit
+        # and leave the tenant half-ingested and over quota.
+        usage_service.check(db, current_user.organization, "knowledge_docs", amount=len(files))
 
         if len(files) > MAX_PDF_FILES:
             raise HTTPException(
@@ -424,6 +430,11 @@ async def add_urls(
         if current_user.organization_id != request.org_id:
             raise HTTPException(status_code=403, detail="Unauthorized access to organization")
 
+        usage_service.check(
+            db, current_user.organization, "knowledge_docs",
+            amount=max(1, len(request.urls or [])),
+        )
+
         # Validate the agent (format + ownership) once, up front.
         agent_uuid = None
         if request.agent_id:
@@ -566,6 +577,8 @@ async def add_text_source(
     try:
         if current_user.organization_id != request.org_id:
             raise HTTPException(status_code=403, detail="Unauthorized access to organization")
+
+        usage_service.check(db, current_user.organization, "knowledge_docs")
 
         # Validate the agent (format + ownership) up front.
         agent_uuid = None

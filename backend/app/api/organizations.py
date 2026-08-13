@@ -23,6 +23,7 @@ import json
 
 from app.database import get_db
 from app.models.organization import Organization
+from app.models.plan import Plan
 from app.models.user import User
 from app.models.schemas.organization import (
     OrganizationCreate,
@@ -140,6 +141,25 @@ async def create_organization(
             timezone=org_data.timezone,
             business_hours=org_data.business_hours
         )
+
+        # Put the tenant on the default plan explicitly.
+        #
+        # The quota service falls back to the default when plan_code is NULL, so
+        # limits are enforced either way — which is exactly why this was easy to
+        # miss. What NULL breaks is everything that reads the column rather than
+        # calling the service: the operator console shows "no plan", and billing
+        # has no tier to attach a subscription to. Store the answer, don't infer
+        # it on every read.
+        default_plan = db.query(Plan).filter(
+            Plan.is_default == True, Plan.is_active == True
+        ).first()
+        if default_plan:
+            organization.plan_code = default_plan.code
+        else:
+            logger.warning(
+                "No default plan in the catalog; organization %s created without one",
+                organization.id,
+            )
 
         # Note: no default agent is created here. New orgs start with zero
         # agents so the guided onboarding flow (Create → Teach → Test → Launch)

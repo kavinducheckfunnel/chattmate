@@ -57,6 +57,9 @@ export const ROUTE_PERMISSIONS: Record<string, readonly string[]> = {
   '/settings/widget-apps': ['manage_organization'],
   // Everyone can reach their own profile, and 403 must never deny itself or
   // the guard has nowhere to send anyone.
+  // Empty for the same reason as /settings/user: everyone can see what their
+  // own workspace has consumed, including the agent who just hit the ceiling.
+  '/settings/usage': [],
   '/settings/user': [],
   '/403': [],
 }

@@ -82,7 +82,21 @@ class Customer(Base):
     # Define relationships
     organization = relationship("Organization", back_populates="customers")
     chat_histories = relationship("ChatHistory", back_populates="customer")
-    session_assignments = relationship("SessionToAgent", back_populates="customer")
+    # Cascade, because SessionToAgent.customer_id is NOT NULL. Without it
+    # SQLAlchemy's default on delete is to disassociate — UPDATE ... SET
+    # customer_id = NULL — which the constraint rejects, so deleting a customer
+    # (and therefore deleting the whole organization, which cascades to
+    # customers) failed for any tenant that had ever held a conversation.
+    #
+    # The column's own FK says ondelete="SET NULL" on a NOT NULL column, which
+    # is self-contradictory and could never have fired successfully; the ORM
+    # cascade is what makes the delete path work. The other session_assignments
+    # relationships (user, agent, group) are all nullable, so detaching is legal
+    # there and they are deliberately left alone.
+    session_assignments = relationship(
+        "SessionToAgent", back_populates="customer",
+        cascade="all, delete-orphan",
+    )
     ratings = relationship("Rating", back_populates="customer")
     lead_capture_responses = relationship(
         "LeadCaptureResponse", back_populates="customer", cascade="all, delete-orphan")

@@ -15,7 +15,9 @@ limitations under the License.
 """
 
 import uuid
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, func, event
+from sqlalchemy import (
+    Column, Integer, String, Boolean, DateTime, JSON, ForeignKey, func, event
+)
 from sqlalchemy.orm import relationship
 from app.database import Base
 from app.models.role import Role
@@ -42,12 +44,39 @@ class Organization(Base):
     })
     settings = Column(JSON, default={})
     is_active = Column(Boolean, default=True)
+
+    # Which tier this tenant is on. Deliberately named `plan`, not
+    # `subscription`: the enterprise submodule attaches its own Subscription
+    # relationship to this class at mapper-configured time, and reusing that
+    # name would collide the moment that module is present.
+    #
+    # ondelete is RESTRICT rather than CASCADE or SET NULL — deleting a plan
+    # that tenants are still on should fail loudly, not silently move paying
+    # customers onto no plan at all.
+    plan_code = Column(
+        String(32),
+        ForeignKey("plans.code", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(),
                         onupdate=func.now())
 
     # Define relationships
-    chat_histories = relationship("ChatHistory", back_populates="organization")
+    #
+    # Cascaded, revising an earlier decision to let these detach. The FK is
+    # nullable with ondelete="SET NULL", so detaching is *legal* — but it leaves
+    # every message of a closed account sitting in the database with its
+    # organization_id nulled, unreachable by any tenant-scoped query and
+    # unremovable by any normal path. For conversation transcripts, which carry
+    # whatever a customer typed into a support chat, indefinite orphaned
+    # retention is a liability rather than a feature. Offboarding should mean
+    # the data is gone.
+    chat_histories = relationship(
+        "ChatHistory", back_populates="organization",
+        cascade="all, delete-orphan",
+    )
     users = relationship("User", back_populates="organization",
                          cascade="all, delete-orphan")
     customers = relationship(
@@ -64,9 +93,6 @@ class Organization(Base):
     # or knowledge source: i.e. every real one. That blocks both customer
     # offboarding and suspend/delete from an operator console, so the children
     # have to go with the parent.
-    #
-    # chat_histories is deliberately NOT in this list: its FK is nullable with
-    # ondelete="SET NULL", so detaching is both legal and intended there.
     agents = relationship("Agent", back_populates="organization",
                           cascade="all, delete-orphan")
     knowledge_sources = relationship(
@@ -82,6 +108,14 @@ class Organization(Base):
     workflows = relationship("Workflow", back_populates="organization",
                              cascade="all, delete-orphan")
  
+    plan = relationship("Plan", back_populates="organizations")
+    # Metering rows are worthless without the tenant they describe, and the FK
+    # carries ON DELETE CASCADE so offboarding does not strand them.
+    usage_counters = relationship(
+        "UsageCounter", cascade="all, delete-orphan",
+        primaryjoin="Organization.id == UsageCounter.organization_id",
+    )
+
     jira_tokens = relationship("JiraToken", back_populates="organization", cascade="all, delete-orphan")
     shopify_shops = relationship("ShopifyShop", back_populates="organization", cascade="all, delete-orphan")
     

@@ -72,6 +72,28 @@ class SessionToAgentRepository:
             self.db.add(session)
             self.db.commit()
             self.db.refresh(session)
+
+            # Meter the conversation. Every channel creates its session here, so
+            # this counts web, WhatsApp, Slack and the rest without each needing
+            # its own hook.
+            #
+            # Metered but NOT blocked, unlike agents and seats. A conversation is
+            # started by the tenant's *customer* on the tenant's own website;
+            # refusing it would break a live support widget for an end user who
+            # has no idea a quota exists and no way to act on it. Overage is
+            # surfaced in the dashboard and belongs to the billing flow — with a
+            # deliberate grace period — rather than to a hard stop here.
+            if organization_id is not None:
+                try:
+                    from app.services import usage as usage_service
+                    usage_service.record(self.db, organization_id, 'conversations')
+                    self.db.commit()
+                except Exception as e:
+                    # The session exists and the customer is mid-conversation.
+                    # Losing a count is recoverable; failing here is not.
+                    logger.error(f"Error recording conversation usage: {str(e)}")
+                    self.db.rollback()
+
             return session
         except Exception as e:
             logger.error(f"Error creating session: {str(e)}")

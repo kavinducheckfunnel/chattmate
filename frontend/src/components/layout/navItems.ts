@@ -146,6 +146,12 @@ export function useNavItems() {
             show: canAccessPath('/settings/ai-config'),
           },
           {
+            to: '/settings/usage',
+            icon: 'subscription',
+            label: 'Usage & Plan',
+            show: canAccessPath('/settings/usage'),
+          },
+          {
             to: '/settings/user',
             icon: 'usersettings',
             label: 'User Settings',

@@ -40,6 +40,7 @@ from app.services.chat_scope_roles import resolve_role
 from app.core.s3 import get_s3_signed_url, sign_s3_url, upload_file_to_s3, delete_file_from_s3
 from app.core.config import settings
 from app.services.file_storage import local_upload_path
+from app.services import usage as usage_service
 from app.repositories.shopify_shop_repository import ShopifyShopRepository
 from app.models.schemas.shopify.shopify_shop import ShopifyShopUpdate
 from app.core.cors import update_cors_middleware
@@ -158,6 +159,13 @@ async def create_user(
                         detail=f"Maximum number of users ({subscription.quantity}) reached for your plan. Please upgrade your plan to add more users."
                     )
         
+        # Seat quota. Runs whether or not the enterprise module is present —
+        # the block above is inert without it, so on this deployment it was the
+        # only seat limit and it never executed. Placed after the duplicate-email
+        # check so a repeat invitation reports the real reason rather than
+        # spending a seat's worth of quota error on it.
+        usage_service.check(db, current_user.organization, "seats")
+
         # The role must belong to the caller's own organization.
         role = _require_role_in_org(db, user_data.role_id, current_user.organization_id)
 
