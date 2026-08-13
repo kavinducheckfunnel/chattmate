@@ -16,7 +16,7 @@ limitations under the License.
 
 from typing import List
 from urllib.parse import quote
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 import json
@@ -42,6 +42,9 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from app.core.cors import update_cors_middleware
 from app.core.application import app  # Import the FastAPI app instance from the new location
+from app.core.config import settings
+from app.services.public_rate_limit import allow_request
+from app.api.account_auth import issue_and_send_verification
 
 # Disposable-address rejection lives in the enterprise module: the hosted signup
 # flow is what attracts throwaway signups, and the community edition has no
@@ -63,30 +66,77 @@ router = APIRouter(
 async def create_organization(
     org_data: OrganizationCreate,
     response: Response,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Create a new organization with an admin user and default roles"""
+    """Sign up: create a new tenant (organization) with its admin user and roles.
+
+    Upstream refused this outright once any organization existed, which is what
+    made the community edition single-tenant. Self-serve signup replaces that
+    lock with the guards a public write endpoint actually needs: a kill switch,
+    a per-IP rate limit, and explicit conflict handling for the two globally
+    unique columns (users.email and organizations.domain) — without which a
+    duplicate surfaces as an opaque 500 from the database constraint.
+    """
     try:
+        if not settings.ALLOW_PUBLIC_SIGNUP:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Signups are currently closed."
+            )
+
+        # Rate limit before any work: keyed on the caller's IP, honouring the
+        # proxy header since nginx terminates TLS in front of this.
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        client_ip = forwarded or (request.client.host if request.client else "unknown")
+        if not allow_request(f"signup:{client_ip}", settings.SIGNUP_RATE_LIMIT_PER_HOUR, 3600):
+            # Say what the limit actually is and when it clears. "Try again
+            # later" gives the caller nothing to act on — they can't tell a
+            # temporary throttle from a broken endpoint. Retry-After is the
+            # header clients and proxies already understand; 3600 is the window
+            # length, so it is the worst case rather than the exact wait.
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"Too many signups from this network — the limit is "
+                    f"{settings.SIGNUP_RATE_LIMIT_PER_HOUR} per hour. "
+                    "Please try again within the hour."
+                ),
+                headers={"Retry-After": "3600"},
+            )
+
         if HAS_EMAIL_VALIDATION:
             ensure_not_disposable(org_data.admin_email)
 
-        # Check if any organization exists
-        existing_orgs = db.query(Organization).first()
-        
-        # If organizations exist, return 403 Forbidden
-        if existing_orgs:
+        # Password strength is enforced by OrganizationCreate's field_validator,
+        # which calls the same validate_password_strength() as invites and
+        # resets. Deliberately not duplicated here: a second length rule in this
+        # function drifted out of step with the UI's stated policy, and being
+        # length-only it was the weaker of the two — it accepted ten identical
+        # lowercase letters.
+
+        # users.email carries a global unique index, so an address can exist in
+        # exactly one tenant. Say so plainly instead of letting the insert fail.
+        normalized_email = org_data.admin_email.strip().lower()
+        if db.query(User.id).filter(User.email == normalized_email).first():
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Organization already exists"
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists. Try signing in instead."
             )
 
-        
-      
+        # organizations.domain is likewise globally unique and non-null.
+        normalized_domain = org_data.domain.strip().lower()
+        if db.query(Organization.id).filter(Organization.domain == normalized_domain).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This domain is already registered to another workspace."
+            )
+
         # Create organization
         org_repo = OrganizationRepository(db)
         organization = org_repo.create_organization(
             name=org_data.name,
-            domain=org_data.domain,
+            domain=normalized_domain,
             timezone=org_data.timezone,
             business_hours=org_data.business_hours
         )
@@ -132,17 +182,56 @@ async def create_organization(
         db.add(agent_role)
         db.flush()
 
-        # Create admin user with admin role
+        # Create admin user with admin role.
+        #
+        # is_email_verified is set explicitly rather than left to the column
+        # default. That default is server-side `true` so the migration could
+        # backfill existing accounts as verified; relying on it here would make
+        # every new self-serve signup verified on arrival, which is exactly the
+        # check we are adding. Invited teammates keep the default — an admin
+        # typed their address and hands them the password directly, so there is
+        # no unproven claim to verify.
         admin = User(
-            email=org_data.admin_email,
+            email=normalized_email,
             full_name=org_data.admin_name,
             hashed_password=User.get_password_hash(org_data.admin_password),
             organization_id=organization.id,
             role_id=admin_role.id,
-            is_active=True
+            is_active=True,
+            is_email_verified=False,
         )
         db.add(admin)
         db.flush()
+
+        # Send the verification mail before issuing any session, so a hard-gated
+        # deployment never hands out a token it would immediately reject.
+        verification_sent = await issue_and_send_verification(db, admin)
+
+        if settings.REQUIRE_EMAIL_VERIFICATION:
+            # Hard gate: no cookies, no tokens. Logging the owner in here and
+            # then refusing their next login would be worse than not logging
+            # them in at all — they would lose access mid-session with no
+            # explanation of why.
+            db.commit()
+            update_cors_middleware(app)
+            return {
+                "id": organization.id,
+                "name": organization.name,
+                "domain": organization.domain,
+                "timezone": organization.timezone,
+                "business_hours": organization.business_hours,
+                "settings": organization.settings,
+                "is_active": organization.is_active,
+                "email_verification_required": True,
+                "email_verification_sent": verification_sent,
+                "user": {
+                    "id": admin.id,
+                    "email": admin.email,
+                    "full_name": admin.full_name,
+                    "organization_id": organization.id,
+                    "role": admin_role.to_dict()
+                }
+            }
 
         # Generate tokens and set cookies
         token_data = {"sub": str(admin.id), "org": str(organization.id)}
@@ -175,6 +264,7 @@ async def create_organization(
                 "email": admin.email,
                 "full_name": admin.full_name,
                 "organization_id": str(organization.id),
+                "is_email_verified": admin.is_email_verified,
                 "role": admin_role.to_dict()
             }, default=str)),
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
@@ -198,6 +288,8 @@ async def create_organization(
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
+            "email_verification_required": False,
+            "email_verification_sent": verification_sent,
             "user": {
                 "id": admin.id,
                 "email": admin.email,
@@ -210,12 +302,23 @@ async def create_organization(
     except HTTPException:
         db.rollback()
         raise
+    except IntegrityError:
+        # Two signups racing for the same email or domain: the pre-checks above
+        # both passed, then the unique index caught the loser. Report it as the
+        # conflict it is rather than a 500.
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That email or domain was just registered. Please try again."
+        )
     except Exception as e:
         db.rollback()
-        logger.error(f"Organization creation failed: {str(e)}")
+        # Logged in full, but not echoed back: this endpoint is public and
+        # unauthenticated, so the raw exception text would leak schema details.
+        logger.error(f"Organization creation failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to create organization: {str(e)}"
+            detail="Failed to create workspace. Please try again."
         )
 
 

@@ -91,7 +91,12 @@ export function useForgotPassword() {
       error.value = ''
       success.value = ''
 
-      const response = await api.post('/enterprise/signup/forgot-password/request', {
+      // /auth/*, not /enterprise/signup/*. The enterprise module is a private
+      // submodule that is not part of this deployment, so the original path
+      // 404s here and the whole flow was dead — which is why the modal was
+      // gated behind hasEnterpriseModule. These endpoints now ship in the
+      // open-source backend (app/api/account_auth.py) on the same contract.
+      const response = await api.post('/auth/forgot-password/request', {
         email: email.value
       })
 
@@ -137,7 +142,7 @@ export function useForgotPassword() {
         return false
       }
 
-      const response = await api.post('/enterprise/signup/forgot-password/verify', {
+      const response = await api.post('/auth/forgot-password/verify', {
         email: email.value,
         otp: otp.value,
         new_password: newPassword.value

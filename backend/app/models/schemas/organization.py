@@ -14,10 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, Dict, TypedDict
 from uuid import UUID
 
+from app.core.security import validate_password_strength
 from app.models.schemas.user import UserResponse
 
 
@@ -58,6 +59,14 @@ class OrganizationCreate(OrganizationBase):
     admin_name: str
     admin_password: str
 
+    @field_validator('admin_password')
+    @classmethod
+    def _check_strength(cls, value: str) -> str:
+        # The owner account created at signup clears the same bar as an invited
+        # teammate or a password reset. This field previously had no validation
+        # at all, which made the front door the weakest way into the product.
+        return validate_password_strength(value)
+
 
 class OrganizationUpdate(BaseModel):
     name: Optional[str] = None
@@ -74,6 +83,13 @@ class OrganizationCreateResponse(OrganizationBase):
     refresh_token: Optional[str] = None
     token_type: Optional[str] = None
     user: UserResponse
+    # True when this deployment blocks unverified sign-ins, in which case no
+    # session was issued above and the caller must go and click the link.
+    email_verification_required: bool = False
+    # Whether the verification mail actually went out. False means SMTP is
+    # unconfigured or refused it — the UI needs to say so rather than tell the
+    # user to check an inbox nothing was sent to.
+    email_verification_sent: bool = False
 
     class Config:
         from_attributes = True

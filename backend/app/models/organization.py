@@ -56,14 +56,31 @@ class Organization(Base):
                          cascade="all, delete-orphan")
     ai_configs = relationship("AIConfig", back_populates="organization",
                               cascade="all, delete-orphan")
-    agents = relationship("Agent", back_populates="organization")
+    # These all carry NOT NULL organization_id. Without an explicit cascade,
+    # SQLAlchemy's default on delete is to *disassociate* the children — it
+    # issues UPDATE ... SET organization_id = NULL, which the NOT NULL
+    # constraint rejects. The result was that deleting an organization failed
+    # outright for any tenant that had ever created an agent, widget, workflow
+    # or knowledge source: i.e. every real one. That blocks both customer
+    # offboarding and suspend/delete from an operator console, so the children
+    # have to go with the parent.
+    #
+    # chat_histories is deliberately NOT in this list: its FK is nullable with
+    # ondelete="SET NULL", so detaching is both legal and intended there.
+    agents = relationship("Agent", back_populates="organization",
+                          cascade="all, delete-orphan")
     knowledge_sources = relationship(
-        "Knowledge", back_populates="organization")
-    mcp_tools = relationship("MCPTool", back_populates="organization")
-    widgets = relationship("Widget", back_populates="organization")
+        "Knowledge", back_populates="organization",
+        cascade="all, delete-orphan")
+    mcp_tools = relationship("MCPTool", back_populates="organization",
+                             cascade="all, delete-orphan")
+    widgets = relationship("Widget", back_populates="organization",
+                           cascade="all, delete-orphan")
     widget_apps = relationship("WidgetApp", back_populates="organization", cascade="all, delete-orphan")
-    groups = relationship("UserGroup", back_populates="organization")
-    workflows = relationship("Workflow", back_populates="organization")
+    groups = relationship("UserGroup", back_populates="organization",
+                          cascade="all, delete-orphan")
+    workflows = relationship("Workflow", back_populates="organization",
+                             cascade="all, delete-orphan")
  
     jira_tokens = relationship("JiraToken", back_populates="organization", cascade="all, delete-orphan")
     shopify_shops = relationship("ShopifyShop", back_populates="organization", cascade="all, delete-orphan")

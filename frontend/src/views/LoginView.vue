@@ -23,6 +23,7 @@ import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import { useForgotPassword } from '@/composables/useForgotPassword'
 import InstallPrompt from '@/components/pwa/InstallPrompt.vue'
 import { apiPath, getApiUrl } from '@/config/api'
+import api from '@/services/api'
 import type { AxiosError } from 'axios'
 interface ErrorResponse {
     detail: string
@@ -40,34 +41,29 @@ const password = ref('')
 const error = ref('')
 const isLoading = ref(false)
 
-// Check if enterprise module is available
-const { hasEnterpriseModule } = useEnterpriseFeatures()
-
-// Forgot password composable - only initialize if enterprise module is available
+// Password recovery is a core capability, not an enterprise add-on. It used to
+// be initialised only when the enterprise module was present — and since that
+// module is a private submodule absent from this deployment, the composable was
+// never constructed, the link never rendered, and a locked-out customer had no
+// self-serve way back into their account. The backing endpoints now ship in the
+// open-source API, so this loads unconditionally and the ?? fallbacks that
+// stood in for the missing module are gone with it.
 const showForgotPasswordModal = ref(false)
-const forgotPassword = hasEnterpriseModule ? useForgotPassword() : null
-
-// Destructure with fallbacks for when enterprise module is not available
-const isForgotPasswordLoading = forgotPassword?.isLoading ?? ref(false)
-const forgotPasswordError = forgotPassword?.error ?? ref('')
-const forgotPasswordSuccess = forgotPassword?.success ?? ref('')
-const forgotPasswordStep = forgotPassword?.currentStep ?? ref(1)
-const forgotPasswordEmail = forgotPassword?.email ?? ref('')
-const forgotPasswordOtp = forgotPassword?.otp ?? ref('')
-const newPassword = forgotPassword?.newPassword ?? ref('')
-const confirmPassword = forgotPassword?.confirmPassword ?? ref('')
-const passwordValidation = forgotPassword?.passwordValidation ?? ref({
-    score: 0,
-    hasMinLength: false,
-    hasUpperCase: false,
-    hasLowerCase: false,
-    hasNumber: false,
-    hasSpecialChar: false
-})
-const requestPasswordReset = forgotPassword?.requestPasswordReset ?? (() => Promise.resolve(false))
-const verifyAndResetPassword = forgotPassword?.verifyAndResetPassword ?? (() => Promise.resolve(false))
-const resetForgotPasswordForm = forgotPassword?.resetForm ?? (() => {})
-const goBackToEmailStep = forgotPassword?.goBackToEmailStep ?? (() => {})
+const {
+    isLoading: isForgotPasswordLoading,
+    error: forgotPasswordError,
+    success: forgotPasswordSuccess,
+    currentStep: forgotPasswordStep,
+    email: forgotPasswordEmail,
+    otp: forgotPasswordOtp,
+    newPassword,
+    confirmPassword,
+    passwordValidation,
+    requestPasswordReset,
+    verifyAndResetPassword,
+    resetForm: resetForgotPasswordForm,
+    goBackToEmailStep,
+} = useForgotPassword()
 
 // One ordered candidate list, shared with '/', the catch-all and the 403 page.
 // It used to end at '/403', which is not somewhere to land — and the route was
@@ -204,13 +200,31 @@ const handleLogin = async () => {
         router.push(initialRoute)
 
     } catch (err) {
-        console.log(err)
         const axiosError = err as AxiosError<ErrorResponse>
         error.value = axiosError.response?.data?.detail || 'Login failed'
+        // 403 here means the password was correct but the address is unverified
+        // — the one failure the user can fix from this screen, so offer the
+        // resend inline instead of leaving them re-reading a dead error.
+        needsVerification.value = axiosError.response?.status === 403
         console.error('Login error:', err)
     } finally {
         isLoading.value = false
     }
+}
+
+const needsVerification = ref(false)
+const resendState = ref<'idle' | 'sending' | 'sent'>('idle')
+
+const resendVerification = async () => {
+    resendState.value = 'sending'
+    try {
+        await api.post('/auth/resend-verification', { email: email.value })
+    } catch {
+        // The endpoint answers identically for known and unknown addresses, so
+        // there is no failure worth reporting differently — showing "sent"
+        // regardless is what keeps it from being an account-existence oracle.
+    }
+    resendState.value = 'sent'
 }
 
 const navigateToSignup = () => {
@@ -294,17 +308,31 @@ const handleVerifyAndResetPassword = async () => {
                 <div class="field">
                     <label for="password">Password</label>
                     <input id="password" v-model="password" type="password" required placeholder="••••••••" autocomplete="current-password" />
-                    <a v-if="hasEnterpriseModule" href="#" @click.prevent="openForgotPasswordModal" class="forgot-link">Forgot password?</a>
+                    <a href="#" @click.prevent="openForgotPasswordModal" class="forgot-link">Forgot password?</a>
                 </div>
 
-                <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
+                <div v-if="error" class="auth-error" role="alert">
+                    {{ error }}
+                    <button v-if="needsVerification && resendState !== 'sent'" type="button"
+                            class="inline-action" :disabled="resendState === 'sending'"
+                            @click="resendVerification">
+                        {{ resendState === 'sending' ? 'Sending…' : 'Resend verification email' }}
+                    </button>
+                    <span v-else-if="needsVerification" class="inline-done">
+                        Sent — check your inbox.
+                    </span>
+                </div>
 
                 <button type="submit" class="auth-submit" :disabled="isLoading">
                     <span v-if="isLoading">{{ router.currentRoute.value.query.embedded === 'true' ? 'Connecting…' : 'Signing in…' }}</span>
                     <span v-else>Sign In</span>
                 </button>
 
-                <p v-if="hasEnterpriseModule" class="signup-prompt">
+                <!-- Shown unconditionally: signup is a core capability here, not
+                     an enterprise add-on. Gated on hasEnterpriseModule, this was
+                     invisible on a community build, leaving new customers with no
+                     route to create a workspace. -->
+                <p class="signup-prompt">
                     Don't have an account?
                     <a href="#" @click.prevent="navigateToSignup" class="signup-link">Sign up</a>
                 </p>
@@ -346,8 +374,8 @@ const handleVerifyAndResetPassword = async () => {
             </div>
         </div>
 
-        <!-- Forgot Password Modal - only show if enterprise module is available -->
-        <div v-if="hasEnterpriseModule && showForgotPasswordModal" class="modal-overlay">
+        <!-- Forgot Password Modal -->
+        <div v-if="showForgotPasswordModal" class="modal-overlay">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2>{{ forgotPasswordStep === 1 ? 'Reset Password' : 'Verify & Reset' }}</h2>
@@ -635,6 +663,28 @@ const handleVerifyAndResetPassword = async () => {
     border-radius: 10px;
     padding: 10px 14px;
     font-size: 13.5px;
+}
+
+/* Recovery action offered inside the error block it relates to */
+.inline-action {
+    display: block;
+    margin-top: 8px;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: var(--c-coral);
+    text-decoration: underline;
+    cursor: pointer;
+}
+.inline-action:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.inline-done {
+    display: block;
+    margin-top: 8px;
+    font-weight: 600;
+    opacity: 0.85;
 }
 
 .auth-submit {

@@ -126,13 +126,16 @@ async def process_queue_item(queue_item_id: int):
                 agent_id=queue_item.agent_id
             )
 
-            # Process if status is pending
-            if queue_item.status == QueueStatus.PENDING:
-                # Update to processing
-                queue_item.status = QueueStatus.PROCESSING
-                queue_item.processing_stage = ProcessingStage.NOT_STARTED
-                queue_item.progress_percentage = 0.0
-                db.commit()
+            # PROCESSING is the normal entry state now: claim_pending() already
+            # transitioned the row under a lock. PENDING is still accepted so a
+            # direct call to this function (tests, manual reprocess) keeps
+            # working, and it does the transition itself in that case.
+            if queue_item.status in (QueueStatus.PENDING, QueueStatus.PROCESSING):
+                if queue_item.status == QueueStatus.PENDING:
+                    queue_item.status = QueueStatus.PROCESSING
+                    queue_item.processing_stage = ProcessingStage.NOT_STARTED
+                    queue_item.progress_percentage = 0.0
+                    db.commit()
 
                 await knowledge.process_knowledge(queue_item)
 
@@ -200,12 +203,13 @@ async def run_processor():
         PROCESSOR_STATUS["is_running"] = True
         PROCESSOR_STATUS["error"] = None
 
-        # Get pending items with proper connection handling
+        # Claim work atomically rather than just reading what looks pending.
+        # The claim marks each row PROCESSING under FOR UPDATE SKIP LOCKED, so a
+        # second replica of this worker takes different rows instead of the same
+        # ones — previously both would have embedded every document twice.
         with SessionLocal() as db:
             queue_repo = KnowledgeQueueRepository(db)
-            pending_items = queue_repo.get_pending()
-            # Extract IDs before closing the session
-            pending_item_ids = [item.id for item in pending_items] if pending_items else []
+            pending_item_ids = queue_repo.claim_pending()
 
         if pending_item_ids:
             # Reduce concurrent processing to 2 to conserve connections on t3.micro

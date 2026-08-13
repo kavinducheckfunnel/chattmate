@@ -59,6 +59,25 @@ const baseRoutes = [
     meta: { requiresAuth: false },
   },
   {
+    // Self-serve signup. Upstream defines /signup only inside the enterprise
+    // block below, so on a community build the "Sign up" link led nowhere.
+    // Same component as /setup: creating the first workspace and creating the
+    // hundredth are the same operation now that the backend allows both.
+    path: '/signup',
+    name: 'signup',
+    component: () => import('@/views/SetupView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    // Landing page for the link in the verification email. requiresAuth is
+    // false and must stay false: the whole point is that it is reachable by
+    // someone who cannot sign in yet.
+    path: '/verify-email',
+    name: 'verify-email',
+    component: () => import('@/views/VerifyEmailView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
     path: '/ai-agents',
     name: 'ai-agents',
     component: () => import('@/views/AIAgentView.vue'),

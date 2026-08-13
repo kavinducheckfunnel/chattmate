@@ -1,0 +1,127 @@
+# Deploy ChatterMate to chat.growmiq.io
+#
+# Setup (once), in the GitHub repo → Settings → Secrets and variables → Actions:
+#   VPS_SSH_KEY   private key with root access to 187.77.156.57
+#                 (the pair already on the box is ~/.ssh/checkfunnel_ci_deploy)
+#   VPS_HOST      187.77.156.57
+#   VPS_USER      root
+#
+# Images are built ON the VPS rather than here and pushed to a registry. That is
+# the pragmatic choice for one 2-vCPU box: the backend image is 4.5 GB, so
+# pushing and pulling it each deploy would cost far more than rebuilding the few
+# layers that actually changed. Move to a registry when a second host appears.
+
+name: Deploy to growmiq VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Never let two deploys touch the box at once — the second would rebuild
+  # images out from under the first's restart.
+  group: deploy-growmiq
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Multi-tenant checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard against the single-org lock returning
+        # The upstream signup endpoint 403s once one organization exists. If a
+        # merge from upstream restores that block, the product silently reverts
+        # to single-tenant — fail here rather than discover it in production.
+        run: |
+          if grep -q 'detail="Organization already exists"' backend/app/api/organizations.py; then
+            echo "::error file=backend/app/api/organizations.py::single-org lock is back — signup would reject every tenant after the first"
+            exit 1
+          fi
+          echo "OK: single-org lock absent"
+
+      - name: Guard the account-recovery wiring
+        # The forgot-password UI originally called /enterprise/signup/*, which
+        # only exists in a private submodule that is not part of this
+        # deployment — so the flow 404'd and the whole modal was hidden behind
+        # an enterprise flag. If a merge restores either the enterprise path or
+        # that flag, password recovery silently disappears again, and the only
+        # symptom is a link nobody can find.
+        run: |
+          fail=0
+          if grep -q "enterprise/signup/forgot-password" frontend/src/composables/useForgotPassword.ts; then
+            echo "::error file=frontend/src/composables/useForgotPassword.ts::forgot-password points at the enterprise module again; it must call /auth/forgot-password/*"
+            fail=1
+          fi
+          if grep -q 'hasEnterpriseModule && showForgotPasswordModal' frontend/src/views/LoginView.vue; then
+            echo "::error file=frontend/src/views/LoginView.vue::forgot-password modal is gated on the enterprise module again"
+            fail=1
+          fi
+          for route in verify-email resend-verification forgot-password/request forgot-password/verify; do
+            grep -q "\"/$route\"" backend/app/api/account_auth.py || {
+              echo "::error file=backend/app/api/account_auth.py::missing route /$route"; fail=1; }
+          done
+          [ "$fail" = 0 ] && echo "OK: account recovery wired to the open-source API"
+          exit $fail
+
+      - name: Shell syntax
+        run: bash -n scripts/*.sh
+
+  deploy:
+    name: Deploy
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sync source
+        # .env files are excluded deliberately: production secrets live only on
+        # the VPS and are never checked out here.
+        run: |
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy_key" \
+            --exclude '.git' --exclude 'node_modules' --exclude '__pycache__' \
+            --exclude '*.pyc' --exclude '.venv' --exclude 'dist' --exclude '.coverage' \
+            --exclude 'chattermate-test' --exclude 'temp' --exclude 'uploads' \
+            --exclude '.env' --exclude '.env.growmiq' \
+            ./ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/chattermate/"
+
+      - name: Build and restart
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'chmod +x /opt/chattermate/scripts/*.sh && /opt/chattermate/scripts/deploy.sh'
+
+      - name: Smoke test production
+        # Creates and then deletes throwaway tenants against the live site.
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'docker exec chattermate-redis-1 redis-cli --scan --pattern "public_rl:signup:*" \
+               | xargs -r docker exec chattermate-redis-1 redis-cli DEL >/dev/null 2>&1 || true'
+          ./scripts/tenant_isolation_smoke.sh https://chat.growmiq.io
+
+      - name: Cross-tenant IDOR sweep
+        # 25 probes across organizations, users, roles, agents, widgets,
+        # workflows, knowledge and collection filters. This is the check that
+        # would catch a new endpoint shipping without an organization_id guard —
+        # the failure mode that has no database-level backstop today.
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'docker exec chattermate-redis-1 redis-cli --scan --pattern "public_rl:signup:*" \
+               | xargs -r docker exec chattermate-redis-1 redis-cli DEL >/dev/null 2>&1 || true'
+          ./scripts/tenant_isolation_full.sh https://chat.growmiq.io
+
+      - name: Remove test tenants
+        # Inline Python here previously broke the YAML parser outright — the
+        # workflow could not even be read. The logic lives in a script instead.
+        if: always()
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            '/opt/chattermate/scripts/cleanup_test_tenants.sh' || true

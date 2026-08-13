@@ -55,6 +55,13 @@ export interface User {
   full_name: string
   organization_id: string
   is_active?: boolean
+  /**
+   * Whether the address has been confirmed. Optional because sessions created
+   * before verification shipped carry no such field — treat `undefined` as
+   * verified rather than prompting a long-standing user to prove an address
+   * they have been receiving mail at for weeks.
+   */
+  is_email_verified?: boolean
   groups?: UserGroup[]
   role?: Role
   created_at?: string

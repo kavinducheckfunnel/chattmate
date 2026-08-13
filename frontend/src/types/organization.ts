@@ -68,4 +68,8 @@ export interface OrganizationResponse extends Omit<OrganizationCreate, 'admin_pa
   refresh_token?: string
   token_type?: string
   user: User
+  /** Deployment blocks unverified sign-in, so no session was issued. */
+  email_verification_required?: boolean
+  /** Whether the verification email actually left the server. */
+  email_verification_sent?: boolean
 }

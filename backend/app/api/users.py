@@ -493,9 +493,11 @@ async def login(
 ):
     """Authenticate user and set cookies"""
     try:
-        # Verify credentials
+        # Signup stores the address lowercased, so match it the same way here.
+        # Without this, anyone who typed a capital at signup could never log in:
+        # the stored row is lowercase and this lookup is case-sensitive.
         user = db.query(User).filter(
-            User.email == form_data.username,
+            User.email == form_data.username.strip().lower(),
             User.is_active == True
         ).first()
   
@@ -504,6 +506,20 @@ async def login(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
                 headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Verification gate, checked only after the password is confirmed.
+        # Order matters: answering "verify your email" before knowing the
+        # password would tell an anonymous caller which addresses have accounts.
+        # 403 rather than 401 so the client can distinguish "wrong credentials"
+        # from "right credentials, unverified" and offer to resend the link.
+        if settings.REQUIRE_EMAIL_VERIFICATION and not user.is_email_verified:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Please verify your email address before signing in. "
+                    "Check your inbox for the verification link."
+                ),
             )
 
         # Update online status
@@ -543,6 +559,11 @@ async def login(
             "email": user.email,
             "full_name": user.full_name,
             "organization_id": str(user.organization_id),
+            # Lets the SPA show the "verify your address" prompt without an
+            # extra round trip per page load. Sessions predating this field
+            # omit it, and the client treats absent as verified, so existing
+            # users are never nagged.
+            "is_email_verified": user.is_email_verified,
             "role": role.to_dict() if role else None
         }, default=str)
         response.set_cookie(
@@ -724,6 +745,11 @@ async def refresh_token(
             "email": user.email,
             "full_name": user.full_name,
             "organization_id": str(user.organization_id),
+            # Lets the SPA show the "verify your address" prompt without an
+            # extra round trip per page load. Sessions predating this field
+            # omit it, and the client treats absent as verified, so existing
+            # users are never nagged.
+            "is_email_verified": user.is_email_verified,
             "role": role.to_dict() if role else None
         }, default=str)
         response.set_cookie(

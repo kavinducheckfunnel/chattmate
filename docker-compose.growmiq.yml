@@ -1,0 +1,184 @@
+# ChatterMate — isolated stack for the growmiq VPS (chat.growmiq.io)
+#
+# This VPS already runs the Checkfunnel Django app *natively* (nginx on 80/443,
+# daphne on 8000, postgres on 5432, redis on 6379). Nothing here may collide
+# with it, so this file deliberately differs from docker-compose.prod.yml:
+#
+#   * Every published port is bound to 127.0.0.1 only. Docker writes its own
+#     iptables rules that bypass ufw, so a 0.0.0.0 bind would silently expose
+#     Postgres to the internet past the firewall. The host nginx is the only
+#     thing that reaches these ports.
+#   * Postgres and Redis are NOT published at all — they are reachable only on
+#     this stack's private network, so the native 5432/6379 stay untouched.
+#   * Backend answers on 8080, not 8000, which daphne owns.
+#   * Memory limits on every service. The box has 7.8 GB with no swap and a
+#     live app on it; an unbounded embedding run would OOM-kill Checkfunnel.
+#   * ticket_investigator and crm_sync are omitted. Each loads its own copy of
+#     the torch/FastEmbed stack (~1.5 GB resident) for AI ticketing and CRM
+#     push — neither is needed for signup and chat. Add them back after a RAM
+#     upgrade; see the `profiles` note on knowledge_processor.
+#
+# Run with an explicit project name so volumes/networks can never be confused
+# with another stack on this host:
+#   docker compose -p chattermate -f docker-compose.growmiq.yml up -d
+
+services:
+  db:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    environment:
+      POSTGRES_DB: chattermate
+      # Role stays `postgres`: docker-entrypoint-initdb.d/init-vector.sql grants
+      # the `ai` schema (pgvector) to that name literally, so a renamed role
+      # fails initialisation. Isolation here comes from the network — this
+      # Postgres is never published to the host — not from the account name.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.growmiq}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chattermate"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 1g
+    networks: [chattermate]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 192mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    mem_limit: 256m
+    networks: [chattermate]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # `heads`, not `head`: this repo ships two unmerged migration branches
+    # (add_allow_new_chat_001 and normalise_upload_prefix_001), and the
+    # singular form aborts with "Multiple head revisions are present" — which,
+    # chained with &&, silently stops the server from ever starting.
+    command: >
+      bash -c "alembic upgrade heads &&
+               python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+    env_file: [./backend/.env]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ENVIRONMENT: production
+      # Overrides the value in backend/.env: this stack runs its own Postgres
+      # with its own credentials, unrelated to the host's native cluster.
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/chattermate
+      REDIS_URL: redis://redis:6379/0
+      REDIS_ENABLED: "true"
+      DEBUG: "False"
+      # Single-threaded embedding: 2 vCPU shared with Checkfunnel's celery
+      # workers, so parallel embedding starves both.
+      EMBEDDING_MAX_WORKERS: "1"
+      KB_MAX_WORKERS: "1"
+      EMBEDDING_SINGLE_THREADED: "true"
+      EMBEDDING_SEQUENTIAL_FALLBACK: "true"
+      HF_HOME: /app/.cache/huggingface
+      HF_HUB_CACHE: /app/.cache/huggingface/hub
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TORCH_HOME: /app/.cache/torch
+      OMP_NUM_THREADS: "1"
+    ports:
+      - "127.0.0.1:8080:8000"
+    volumes:
+      - uploads:/app/uploads
+      - ./config:/app/config
+      - backend_assets:/app/assets
+      - huggingface_cache:/app/.cache/huggingface
+      - torch_cache:/app/.cache/torch
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+    mem_limit: 2600m
+    networks: [chattermate]
+    logging: &jsonlog
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  # Crawls and embeds knowledge sources. Required for the RAG feature; it is the
+  # single heaviest process in the stack, so it gets the tightest leash.
+  knowledge_processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m app.workers.knowledge_processor
+    env_file: [./backend/.env]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ENVIRONMENT: production
+      # Overrides the value in backend/.env: this stack runs its own Postgres
+      # with its own credentials, unrelated to the host's native cluster.
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/chattermate
+      REDIS_URL: redis://redis:6379/0
+      REDIS_ENABLED: "true"
+      EMBEDDING_MAX_WORKERS: "1"
+      KB_MAX_WORKERS: "1"
+      EMBEDDING_SINGLE_THREADED: "true"
+      EMBEDDING_SEQUENTIAL_FALLBACK: "true"
+      HF_HOME: /app/.cache/huggingface
+      HF_HUB_CACHE: /app/.cache/huggingface/hub
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TORCH_HOME: /app/.cache/torch
+      OMP_NUM_THREADS: "1"
+    volumes:
+      - uploads:/app/uploads
+      - ./config:/app/config
+      - huggingface_cache:/app/.cache/huggingface
+      - torch_cache:/app/.cache/torch
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+    # Deliberately single-replica: get_pending() claims jobs with a plain
+    # unlocked SELECT, so a second replica double-processes documents and
+    # double-bills the embedding work.
+    mem_limit: 2g
+    networks: [chattermate]
+    logging: *jsonlog
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend.prod
+    env_file: [./frontend/.env]
+    ports:
+      - "127.0.0.1:3080:80"
+    depends_on: [backend]
+    restart: unless-stopped
+    mem_limit: 256m
+    networks: [chattermate]
+    logging: *jsonlog
+
+networks:
+  chattermate:
+    name: chattermate_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:
+  backend_assets:
+  huggingface_cache:
+  torch_cache:

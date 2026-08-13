@@ -15,7 +15,7 @@ limitations under the License.
 """
 
 from sqlalchemy.orm import Session
-from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
+from app.models.knowledge_queue import KnowledgeQueue, ProcessingStage, QueueStatus
 from typing import List, Optional
 from datetime import datetime
 from app.core.logger import get_logger
@@ -41,11 +41,51 @@ class KnowledgeQueueRepository:
         ).first()
 
     def get_pending(self) -> List[KnowledgeQueue]:
-        """Get all pending queue items ordered by priority (highest first), then by creation time"""
+        """Get all pending queue items ordered by priority (highest first), then by creation time.
+
+        Read-only view, for status displays. Do NOT drive a worker from this —
+        it takes no lock, so two workers reading it both see the same rows and
+        both process them. Use claim_pending() to actually take work.
+        """
         return self.db.query(KnowledgeQueue)\
             .filter(KnowledgeQueue.status == QueueStatus.PENDING)\
             .order_by(KnowledgeQueue.priority.desc(), KnowledgeQueue.created_at.asc())\
             .all()
+
+    def claim_pending(self, limit: int = 10) -> List[int]:
+        """Atomically take up to `limit` pending items for this worker.
+
+        FOR UPDATE SKIP LOCKED is what makes a second worker process safe: it
+        skips rows another transaction already holds and takes the next ones
+        instead of blocking on them or — worse — reading them as available.
+        Without it, running two knowledge_processor replicas embeds every
+        document twice, duplicating both the vector rows and the embedding spend.
+
+        The claim flips status to PROCESSING inside the locking transaction, so
+        by the time the lock is released the row no longer looks pending to
+        anyone else. Mirrors the pattern already used for CRM jobs in
+        repositories/crm.py.
+
+        Returns ids, not objects: the caller processes each in its own session.
+        """
+        rows = (
+            self.db.query(KnowledgeQueue)
+            .filter(KnowledgeQueue.status == QueueStatus.PENDING)
+            .order_by(KnowledgeQueue.priority.desc(), KnowledgeQueue.created_at.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+            .all()
+        )
+        claimed: List[int] = []
+        for row in rows:
+            row.status = QueueStatus.PROCESSING
+            row.processing_stage = ProcessingStage.NOT_STARTED
+            row.progress_percentage = 0.0
+            claimed.append(row.id)
+        self.db.commit()
+        if claimed:
+            logger.info(f"Claimed {len(claimed)} knowledge queue item(s): {claimed}")
+        return claimed
 
     def update_status(self, queue_id: int, status: QueueStatus, error: Optional[str] = None) -> bool:
         item = self.db.query(KnowledgeQueue).filter(

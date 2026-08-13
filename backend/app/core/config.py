@@ -162,6 +162,51 @@ class Settings(BaseSettings):
     # so the budget can stay tight. AGENT_RUN_TIMEOUT is the real safety net.
     AGENT_TOOL_CALL_LIMIT: int = int(os.getenv("AGENT_TOOL_CALL_LIMIT", "5"))
 
+    # --- Self-serve multi-tenant signup -------------------------------------
+    # Upstream ships POST /organizations locked to a single organization: it
+    # 403s once one exists, which makes the community edition a single-tenant
+    # appliance. Opening it is what turns this into a SaaS, so it is a flag
+    # rather than a code edit — set it false to close registration (e.g. an
+    # invite-only phase) without redeploying different code.
+    ALLOW_PUBLIC_SIGNUP: bool = os.getenv("ALLOW_PUBLIC_SIGNUP", "true").lower() == "true"
+
+    # Signups permitted from one IP per hour. Org creation is unauthenticated
+    # and writes several rows, so it needs a ceiling that a scripted abuser
+    # hits before the database does.
+    # 20, not 5: a single office or coworking NAT can legitimately produce
+    # several signups in an hour, while a scripted abuser wants thousands — so
+    # the lower value blocked real people without troubling an attacker.
+    SIGNUP_RATE_LIMIT_PER_HOUR: int = int(os.getenv("SIGNUP_RATE_LIMIT_PER_HOUR", "20"))
+
+    # Name used in the subject and body of platform emails. Separate from
+    # PROJECT_NAME so the product can be white-labelled for resale without
+    # renaming the application itself.
+    PLATFORM_NAME: str = os.getenv("PLATFORM_NAME", "ChatterMate")
+
+    # Whether an unverified owner is blocked from signing in.
+    #
+    # Default false, and that default is load-bearing: verification depends on
+    # SMTP, so making it mandatory means every misconfigured or throttled mail
+    # server locks out every new customer with no way back in. False keeps the
+    # account usable while the UI nags for verification — the pattern most SaaS
+    # products use. Flip it to true once mail delivery is proven in production
+    # and you want unverified signups genuinely blocked.
+    REQUIRE_EMAIL_VERIFICATION: bool = os.getenv(
+        "REQUIRE_EMAIL_VERIFICATION", "false").lower() == "true"
+
+    # Password-reset requests permitted per email address per hour, and per IP
+    # per hour. Two ceilings because they stop different things: the per-email
+    # limit stops someone mailbombing one victim, the per-IP limit stops a
+    # scripted sweep across many addresses.
+    PASSWORD_RESET_RATE_LIMIT_PER_HOUR: int = int(
+        os.getenv("PASSWORD_RESET_RATE_LIMIT_PER_HOUR", "5"))
+
+    # No SIGNUP_MIN_PASSWORD_LENGTH knob here on purpose. Password policy has
+    # exactly one home — MIN_PASSWORD_LENGTH / MIN_PASSWORD_CHARACTER_CLASSES in
+    # app/core/security.py — and signup now runs through the same validator as
+    # invites and resets. A signup-only length rule is precisely how the backend
+    # and the UI's checklist ended up stating different requirements.
+
     # Knowledge base content summarization settings
     KNOWLEDGE_SUMMARY_ENABLED: bool = os.getenv("KNOWLEDGE_SUMMARY_ENABLED", "false").lower() == "true"
     KNOWLEDGE_SUMMARY_MODEL_TYPE: str = os.getenv("KNOWLEDGE_SUMMARY_MODEL_TYPE", "GROQ")

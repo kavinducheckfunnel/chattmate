@@ -75,6 +75,17 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     fcm_token_web = Column(String, nullable=True)
 
+    # Email ownership, tracked separately from is_active. is_active is an
+    # administrative switch (an admin suspending a teammate); this records
+    # whether the address was ever proven to belong to them. Conflating the two
+    # would mean an unverified signup looks identical to a suspended account.
+    #
+    # Backfilled True for everyone who existed before verification shipped —
+    # they predate the check, and marking them unverified would nag accounts
+    # that have been in use for weeks.
+    is_email_verified = Column(Boolean, nullable=False, server_default='true')
+    email_verified_at = Column(DateTime(timezone=True), nullable=True)
+
     # Define relationships
     organization = relationship("Organization", back_populates="users")
     role = relationship("Role", back_populates="users")
@@ -93,6 +104,9 @@ class User(Base):
     # Add this new relationship
     session_assignments = relationship("SessionToAgent", back_populates="user")
     ratings = relationship("Rating", back_populates="user")
+    auth_tokens = relationship(
+        "AuthToken", back_populates="user", cascade="all, delete-orphan"
+    )
     def to_dict(self):
         """Convert user object to dictionary"""
         return {
@@ -100,6 +114,7 @@ class User(Base):
             "email": self.email,
             "full_name": self.full_name,
             "is_active": self.is_active,
+            "is_email_verified": self.is_email_verified,
             "organization_id": str(self.organization_id),
             "created_at": self.created_at,
             "updated_at": self.updated_at,

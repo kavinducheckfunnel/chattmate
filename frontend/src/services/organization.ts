@@ -28,8 +28,12 @@ interface ErrorResponse {
 export const createOrganization = async (data: OrganizationCreate) => {
   const response = await api.post<OrganizationResponse>('/organizations', data)
 
-  // Store user info if available in response
-  if (response.data.user) {
+  // Only cache the user when a session actually came back with them. Under
+  // REQUIRE_EMAIL_VERIFICATION the backend deliberately issues no cookies, and
+  // storing the user regardless would leave the SPA believing it is signed in
+  // — route guards would let it through to a dashboard whose every API call
+  // then 401s.
+  if (response.data.user && !response.data.email_verification_required) {
     userService.setCurrentUser(response.data.user)
   }
 

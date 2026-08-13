@@ -17,6 +17,7 @@ limitations under the License.
 from app.database import Base
 from .organization import Organization
 from .user import User
+from .auth_token import AuthToken, TokenPurpose
 from .customer import Customer
 from .role import Role
 from .permission import Permission
@@ -73,6 +74,8 @@ from app.models.guardrail_event import GuardrailEvent
 __all__ = [
     "Organization",
     "User",
+    "AuthToken",
+    "TokenPurpose",
     "Customer",
     "Permission",
     "Role",

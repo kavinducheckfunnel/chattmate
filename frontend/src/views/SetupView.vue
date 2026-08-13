@@ -15,37 +15,40 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import type { OrganizationCreate } from '@/types/organization'
 import { createOrganization, getSetupStatus } from '@/services/organization'
 import { userService } from '@/services/user'
 import { validatePassword, validateDomain, validateEmail, validateName, validateOrgName, type PasswordStrength } from '@/utils/validators'
+import { extractApiError } from '@/utils/apiError'
+import InstallPrompt from '@/components/pwa/InstallPrompt.vue'
 // @ts-ignore
-import { listTz, clientTz } from 'timezone-select-js'
+import { clientTz } from 'timezone-select-js'
 import type { BusinessHoursDict } from '@/types/organization'
-
 
 const router = useRouter()
 const loading = ref(false)
 const error = ref('')
 const checkingOrganization = ref(true)
 
-// Check if organization exists
+// Set once the account exists but no session was issued, because this
+// deployment requires the address to be verified first.
+const awaitingVerification = ref(false)
+const verificationEmailSent = ref(false)
+const submittedEmail = ref('')
+
+// This view serves two jobs: first-run setup, and ongoing self-serve signup at
+// /signup. It used to bounce anonymous visitors to /login as soon as ANY
+// organization existed — correct while the backend allowed only one, but now
+// that each visitor creates their own workspace that redirect would make signup
+// unreachable for everyone after the first customer. Only an already
+// authenticated user is sent away, since they have a workspace already.
 onMounted(async () => {
     try {
-        const isSetupComplete = await getSetupStatus()
-        // Only query setup status if user is authenticated
-        if (userService.isAuthenticated()) {
-            
-            if (isSetupComplete) {
-                router.push('/ai-agents')
-            }
+        if (userService.isAuthenticated() && await getSetupStatus()) {
+            router.push('/ai-agents')
         }
-        else if (isSetupComplete){
-            router.push('/login') 
-        }   
-        
     } catch (e) {
         error.value = e instanceof Error ? e.message : 'Failed to check organization status'
     } finally {
@@ -53,28 +56,31 @@ onMounted(async () => {
     }
 })
 
-const timezones = ref(listTz())
-const selectedTimezone = ref(clientTz())
-
-// Add default business hours
+// Sent with the signup but not asked for on this screen.
+//
+// Business hours previously occupied a seven-row grid of toggles and time
+// selects — by far the largest thing on the page, and asked before the customer
+// had seen the product at all. The defaults below are the common case, the
+// timezone is read from the browser, and both are editable under
+// Settings → Organization. Nothing is lost by not asking here, and the form
+// now reads as the same short, single-column pane as the sign-in screen.
 const defaultBusinessHours: BusinessHoursDict = {
-  monday: { start: '09:00', end: '17:00', enabled: true },
-  tuesday: { start: '09:00', end: '17:00', enabled: true },
-  wednesday: { start: '09:00', end: '17:00', enabled: true },
-  thursday: { start: '09:00', end: '17:00', enabled: true },
-  friday: { start: '09:00', end: '17:00', enabled: true },
-  saturday: { start: '09:00', end: '17:00', enabled: false },
-  sunday: { start: '09:00', end: '17:00', enabled: false }
+    monday: { start: '09:00', end: '17:00', enabled: true },
+    tuesday: { start: '09:00', end: '17:00', enabled: true },
+    wednesday: { start: '09:00', end: '17:00', enabled: true },
+    thursday: { start: '09:00', end: '17:00', enabled: true },
+    friday: { start: '09:00', end: '17:00', enabled: true },
+    saturday: { start: '09:00', end: '17:00', enabled: false },
+    sunday: { start: '09:00', end: '17:00', enabled: false }
 }
 
-// Update orgData initialization
 const orgData = ref<OrganizationCreate>({
     name: '',
     domain: '',
     admin_email: '',
     admin_name: '',
     admin_password: '',
-    timezone: selectedTimezone.value,
+    timezone: clientTz(),
     business_hours: defaultBusinessHours,
     settings: {}
 })
@@ -98,75 +104,72 @@ const adminNameTouched = ref(false)
 const isAdminNameValid = ref(false)
 const emailTouched = ref(false)
 const isEmailValid = ref(false)
+const confirmTouched = ref(false)
 
-// Input handlers
+const passwordsMatch = computed(
+    () => confirmPassword.value.length > 0 && orgData.value.admin_password === confirmPassword.value
+)
+
+// Every requirement in the checklist below is one the backend also enforces via
+// validate_password_strength(). Keeping the two in step matters: when the UI
+// asked for 8 characters and the API demanded 10, signup failed with a message
+// that contradicted the checklist the user had just satisfied.
+const passwordMeetsPolicy = computed(() =>
+    passwordStrength.value.hasMinLength &&
+    passwordStrength.value.hasUpperCase &&
+    passwordStrength.value.hasLowerCase &&
+    passwordStrength.value.hasNumber &&
+    passwordStrength.value.hasSpecialChar
+)
+
 const handleOrgNameInput = (name: string) => {
-    if (!orgNameTouched.value && name.length > 0) {
-        orgNameTouched.value = true
-    }
+    if (!orgNameTouched.value && name.length > 0) orgNameTouched.value = true
     isOrgNameValid.value = validateOrgName(name)
 }
 
 const handleAdminNameInput = (name: string) => {
-    if (!adminNameTouched.value && name.length > 0) {
-        adminNameTouched.value = true
-    }
+    if (!adminNameTouched.value && name.length > 0) adminNameTouched.value = true
     isAdminNameValid.value = validateName(name)
 }
 
 const handleEmailInput = (email: string) => {
-    if (!emailTouched.value && email.length > 0) {
-        emailTouched.value = true
-    }
+    if (!emailTouched.value && email.length > 0) emailTouched.value = true
     isEmailValid.value = validateEmail(email)
 }
 
 const handlePasswordInput = (password: string) => {
-    if (!passwordTouched.value && password.length > 0) {
-        passwordTouched.value = true
-    }
+    if (!passwordTouched.value && password.length > 0) passwordTouched.value = true
     passwordStrength.value = validatePassword(password)
 }
 
 const handleDomainInput = (domain: string) => {
-    if (!domainTouched.value && domain.length > 0) {
-        domainTouched.value = true
-    }
+    if (!domainTouched.value && domain.length > 0) domainTouched.value = true
     isDomainValid.value = validateDomain(domain)
 }
 
 const handleSubmit = async () => {
     if (!isOrgNameValid.value) {
-        error.value = 'Please enter a valid organization name'
+        error.value = 'Please enter a valid workspace name'
         return
     }
-
     if (!isDomainValid.value) {
-        error.value = 'Please enter a valid domain'
+        error.value = 'Please enter a valid domain, like example.com'
         return
     }
-
     if (!isAdminNameValid.value) {
-        error.value = 'Please enter a valid admin name'
+        error.value = 'Please enter your full name'
         return
     }
-
     if (!isEmailValid.value) {
         error.value = 'Please enter a valid email address'
         return
     }
-
-    if (orgData.value.admin_password !== confirmPassword.value) {
-        error.value = 'Passwords do not match'
+    if (!passwordMeetsPolicy.value) {
+        error.value = 'Password does not meet all the requirements listed'
         return
     }
-
-    if (!passwordStrength.value.hasMinLength || 
-        !passwordStrength.value.hasUpperCase || 
-        !passwordStrength.value.hasLowerCase || 
-        !passwordStrength.value.hasNumber || 
-        !passwordStrength.value.hasSpecialChar) {
-        error.value = 'Password must meet all requirements'
+    if (orgData.value.admin_password !== confirmPassword.value) {
+        error.value = 'Passwords do not match'
         return
     }
 
@@ -174,280 +177,626 @@ const handleSubmit = async () => {
     error.value = ''
 
     try {
-        await createOrganization(orgData.value)
+        const result = await createOrganization(orgData.value)
+        if (result.email_verification_required) {
+            submittedEmail.value = orgData.value.admin_email
+            verificationEmailSent.value = result.email_verification_sent !== false
+            awaitingVerification.value = true
+            return
+        }
         router.push('/ai-agents')
     } catch (e) {
-        error.value = e instanceof Error ? e.message : 'Failed to create organization'
+        // extractApiError, not e.message: axios puts a generic "Request failed
+        // with status code 409" on the Error, while the reason the user needs
+        // ("that email is already registered") is in response.data.detail.
+        error.value = extractApiError(e, 'Failed to create workspace')
     } finally {
         loading.value = false
     }
 }
-
-// Add watch to update orgData.timezone when selectedTimezone changes
-watch(selectedTimezone, (newTz) => {
-    orgData.value.timezone = newTz
-})
-
-// Add these helper functions
-const days = [
-  { key: 'monday', label: 'Monday' },
-  { key: 'tuesday', label: 'Tuesday' },
-  { key: 'wednesday', label: 'Wednesday' },
-  { key: 'thursday', label: 'Thursday' },
-  { key: 'friday', label: 'Friday' },
-  { key: 'saturday', label: 'Saturday' },
-  { key: 'sunday', label: 'Sunday' }
-] as const
-
-const timeOptions = Array.from({ length: 24 * 4 }, (_, i) => {
-  const hour = Math.floor(i / 4)
-  const minute = (i % 4) * 15
-  return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
-})
 </script>
 
 <template>
-    <main v-if="!checkingOrganization" class="setup">
-        <div class="container">
-            <!-- Header -->
-            <header class="setup-header text-center">
-                <h1 class="gradient-text">Welcome to ChatterMate</h1>
-                <p class="subtitle opacity-80">Let's get your organization set up</p>
-            </header>
-
-            <!-- Content -->
-            <div class="setup-content">
-                <div class="card">
-                    <form @submit.prevent="handleSubmit">
-                        <div class="form-group">
-                            <label class="form-label" for="orgName">Organization Name</label>
-                            <input class="form-input" id="orgName" v-model="orgData.name"
-                                @input="handleOrgNameInput(orgData.name)" type="text" required
-                                :class="{ 'invalid': orgNameTouched && !isOrgNameValid }"
-                                placeholder="Enter your organization name" autocomplete="organization">
-                            <p v-if="orgNameTouched && !isOrgNameValid" class="error-hint">
-                                Organization name must be 2-100 characters and can contain letters, numbers, spaces,
-                                hyphens, apostrophes, & and dots
-                            </p>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label" for="domain">Domain</label>
-                            <input class="form-input" id="domain" v-model="orgData.domain"
-                                @input="handleDomainInput(orgData.domain)" type="text" required
-                                :class="{ 'invalid': domainTouched && !isDomainValid }" placeholder="yourdomain.com">
-                            <p v-if="domainTouched && !isDomainValid" class="error-hint">
-                                Please enter a valid domain (e.g., example.com)
-                            </p>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label" for="timezone">Timezone</label>
-                            <select 
-                                class="form-input" 
-                                id="timezone" 
-                                v-model="selectedTimezone" 
-                                required
-                            >
-                                <option 
-                                    v-for="tz in timezones" 
-                                    :key="tz.value" 
-                                    :value="tz.value"
-                                    :selected="selectedTimezone === tz.value"
-                                >
-                                    {{ tz.label }}
-                                </option>
-                            </select>
-                            <p class="form-hint">
-                                Select your organization's primary timezone
-                            </p>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Business Hours</label>
-                            <div class="business-hours">
-                                <div v-for="day in days" :key="day.key" class="day-row">
-                                    <div class="day-toggle">
-                                        <label class="toggle">
-                                            <input 
-                                                type="checkbox" 
-                                                v-model="orgData.business_hours[day.key].enabled"
-                                            >
-                                            <span class="toggle-slider"></span>
-                                        </label>
-                                        <span class="day-label">{{ day.label }}</span>
-                                    </div>
-                                    <div class="time-selects" :class="{ disabled: !orgData.business_hours[day.key].enabled }">
-                                        <select 
-                                            v-model="orgData.business_hours[day.key].start"
-                                            :disabled="!orgData.business_hours[day.key].enabled"
-                                        >
-                                            <option v-for="time in timeOptions" :key="time" :value="time">
-                                                {{ time }}
-                                            </option>
-                                        </select>
-                                        <span class="time-separator">to</span>
-                                        <select 
-                                            v-model="orgData.business_hours[day.key].end"
-                                            :disabled="!orgData.business_hours[day.key].enabled"
-                                        >
-                                            <option v-for="time in timeOptions" :key="time" :value="time">
-                                                {{ time }}
-                                            </option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <p class="form-hint">Set your organization's operating hours for each day</p>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label" for="adminName">Admin Name</label>
-                            <input class="form-input" id="adminName" v-model="orgData.admin_name"
-                                @input="handleAdminNameInput(orgData.admin_name)" type="text" required
-                                :class="{ 'invalid': adminNameTouched && !isAdminNameValid }"
-                                placeholder="Your full name" autocomplete="name">
-                            <p v-if="adminNameTouched && !isAdminNameValid" class="error-hint">
-                                Name must be 2-100 characters and can contain letters, numbers, spaces, hyphens and
-                                apostrophes
-                            </p>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label" for="adminEmail">Admin Email</label>
-                            <input class="form-input" id="adminEmail" v-model="orgData.admin_email"
-                                @input="handleEmailInput(orgData.admin_email)" type="email" required
-                                :class="{ 'invalid': emailTouched && !isEmailValid }" placeholder="admin@yourdomain.com"
-                                autocomplete="email">
-                            <p v-if="emailTouched && !isEmailValid" class="error-hint">
-                                Please enter a valid email address
-                            </p>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label" for="adminPassword">Admin Password</label>
-                            <input class="form-input" id="adminPassword" v-model="orgData.admin_password"
-                                @input="handlePasswordInput(orgData.admin_password)" type="password" required
-                                placeholder="Enter a secure password" autocomplete="new-password" minlength="8">
-                            <div v-if="passwordTouched" class="password-strength">
-                                <div class="strength-meter">
-                                    <div class="strength-bar"
-                                        :style="{ width: `${(passwordStrength.score / 5) * 100}%` }" :class="[
-                                            passwordStrength.score < 3 ? 'weak' :
-                                                passwordStrength.score < 4 ? 'medium' : 'strong'
-                                        ]"></div>
-                                </div>
-                                <ul class="strength-requirements">
-                                    <li :class="{ met: passwordStrength.hasMinLength }">
-                                        At least 8 characters
-                                    </li>
-                                    <li :class="{ met: passwordStrength.hasUpperCase }">
-                                        Contains uppercase letter
-                                    </li>
-                                    <li :class="{ met: passwordStrength.hasLowerCase }">
-                                        Contains lowercase letter
-                                    </li>
-                                    <li :class="{ met: passwordStrength.hasNumber }">
-                                        Contains number
-                                    </li>
-                                    <li :class="{ met: passwordStrength.hasSpecialChar }">
-                                        Contains special character (!@#$%^&*)
-                                    </li>
-                                </ul>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label" for="confirmPassword">Confirm Password</label>
-                            <input class="form-input" id="confirmPassword" v-model="confirmPassword" type="password"
-                                required placeholder="Confirm your password" autocomplete="new-password">
-                        </div>
-
-                        <div v-if="error" class="error-message" role="alert">
-                            {{ error }}
-                        </div>
-
-                        <div class="form-actions">
-                            <button type="submit" class="btn btn-primary" :class="{ loading }" :disabled="loading">
-                                {{ loading ? '' : 'Create Organization' }}
-                            </button>
-                        </div>
-                    </form>
+    <div v-if="!checkingOrganization" class="auth-page">
+        <!-- Left: form panel -->
+        <div class="form-panel">
+            <div class="auth-logo">
+                <div class="logo-mark">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
                 </div>
+                <span class="logo-word">ChatterMate</span>
+            </div>
+
+            <!-- Post-signup state: the account exists, the session does not. -->
+            <template v-if="awaitingVerification">
+                <h1 class="auth-title">Check your inbox</h1>
+                <p class="auth-sub">
+                    <template v-if="verificationEmailSent">
+                        We sent a verification link to <strong>{{ submittedEmail }}</strong>.
+                        Click it to activate your workspace and sign in.
+                    </template>
+                    <template v-else>
+                        Your workspace was created, but we couldn't send the verification
+                        email. Contact support and we'll activate it for you.
+                    </template>
+                </p>
+                <div class="auth-form">
+                    <router-link to="/login" class="auth-submit as-link">Back to sign in</router-link>
+                    <p class="signup-prompt">
+                        Wrong address, or nothing arrived?
+                        <router-link to="/login" class="signup-link">Sign in to resend</router-link>
+                    </p>
+                </div>
+            </template>
+
+            <template v-else>
+                <h1 class="auth-title">Create your workspace</h1>
+                <p class="auth-sub">Your AI support agent, live in a few minutes</p>
+
+                <form @submit.prevent="handleSubmit" class="auth-form" novalidate>
+                    <div class="field">
+                        <label for="orgName">Workspace name</label>
+                        <input id="orgName" v-model="orgData.name" type="text" required
+                               :class="{ invalid: orgNameTouched && !isOrgNameValid }"
+                               @input="handleOrgNameInput(orgData.name)"
+                               placeholder="Acme Inc." autocomplete="organization" />
+                        <p v-if="orgNameTouched && !isOrgNameValid" class="field-error">
+                            Use 2–100 characters: letters, numbers, spaces, and - ' &amp; .
+                        </p>
+                    </div>
+
+                    <div class="field">
+                        <label for="domain">Company domain</label>
+                        <input id="domain" v-model="orgData.domain" type="text" required
+                               :class="{ invalid: domainTouched && !isDomainValid }"
+                               @input="handleDomainInput(orgData.domain)"
+                               placeholder="acme.com" autocomplete="url" />
+                        <p v-if="domainTouched && !isDomainValid" class="field-error">
+                            Enter a domain like acme.com — no https:// or trailing slash.
+                        </p>
+                    </div>
+
+                    <div class="field">
+                        <label for="adminName">Your name</label>
+                        <input id="adminName" v-model="orgData.admin_name" type="text" required
+                               :class="{ invalid: adminNameTouched && !isAdminNameValid }"
+                               @input="handleAdminNameInput(orgData.admin_name)"
+                               placeholder="Alex Morgan" autocomplete="name" />
+                        <p v-if="adminNameTouched && !isAdminNameValid" class="field-error">
+                            Use 2–100 characters: letters, numbers, spaces, hyphens and apostrophes.
+                        </p>
+                    </div>
+
+                    <div class="field">
+                        <label for="adminEmail">Work email</label>
+                        <input id="adminEmail" v-model="orgData.admin_email" type="email" required
+                               :class="{ invalid: emailTouched && !isEmailValid }"
+                               @input="handleEmailInput(orgData.admin_email)"
+                               placeholder="you@acme.com" autocomplete="email" />
+                        <p v-if="emailTouched && !isEmailValid" class="field-error">
+                            Please enter a valid email address.
+                        </p>
+                    </div>
+
+                    <div class="field">
+                        <label for="adminPassword">Password</label>
+                        <input id="adminPassword" v-model="orgData.admin_password" type="password" required
+                               @input="handlePasswordInput(orgData.admin_password)"
+                               placeholder="••••••••" autocomplete="new-password" />
+                        <div v-if="passwordTouched" class="pw-meter">
+                            <div class="pw-track">
+                                <div class="pw-fill"
+                                     :style="{ width: `${(passwordStrength.score / 5) * 100}%` }"
+                                     :class="passwordStrength.score < 3 ? 'weak' : passwordStrength.score < 5 ? 'medium' : 'strong'"></div>
+                            </div>
+                            <ul class="pw-reqs">
+                                <li :class="{ met: passwordStrength.hasMinLength }">At least 8 characters</li>
+                                <li :class="{ met: passwordStrength.hasUpperCase }">An uppercase letter</li>
+                                <li :class="{ met: passwordStrength.hasLowerCase }">A lowercase letter</li>
+                                <li :class="{ met: passwordStrength.hasNumber }">A number</li>
+                                <li :class="{ met: passwordStrength.hasSpecialChar }">A special character (!@#$%^&amp;*)</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label for="confirmPassword">Confirm password</label>
+                        <input id="confirmPassword" v-model="confirmPassword" type="password" required
+                               :class="{ invalid: confirmTouched && !passwordsMatch }"
+                               @blur="confirmTouched = true"
+                               placeholder="••••••••" autocomplete="new-password" />
+                        <p v-if="confirmTouched && !passwordsMatch" class="field-error">
+                            Passwords do not match.
+                        </p>
+                    </div>
+
+                    <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
+
+                    <button type="submit" class="auth-submit" :disabled="loading">
+                        <span v-if="loading">Creating workspace…</span>
+                        <span v-else>Create workspace</span>
+                    </button>
+
+                    <p class="legal-note">
+                        Your timezone is detected automatically and business hours start at
+                        9–5, Monday to Friday. Both are editable in settings later.
+                    </p>
+
+                    <p class="signup-prompt">
+                        Already have an account?
+                        <router-link to="/login" class="signup-link">Sign in</router-link>
+                    </p>
+                </form>
+            </template>
+
+            <div class="install-hint-slot">
+                <InstallPrompt />
             </div>
         </div>
-    </main>
+
+        <!-- Right: brand panel with aurora -->
+        <div class="brand-panel">
+            <div class="aurora-blob blob-lime"></div>
+            <div class="aurora-blob blob-purple"></div>
+            <div class="aurora-blob blob-teal"></div>
+
+            <div class="brand-copy">
+                <div class="orb">
+                    <div class="orb-glow"></div>
+                    <div class="orb-gradient"></div>
+                    <div class="orb-core"></div>
+                    <div class="orb-ring"></div>
+                </div>
+
+                <div class="brand-badge">
+                    <span class="badge-dot"></span>
+                    open source · MCP-native
+                </div>
+
+                <h2>Your first agent, <em>before lunch.</em></h2>
+                <p class="brand-lede">Point it at your docs, drop one script tag on your site, and it starts answering. No training data to prepare, no model to fine-tune.</p>
+
+                <ul class="feature-list">
+                    <li><span class="check">✓</span> Drop in a PDF or URL — it learns the rest</li>
+                    <li><span class="check">✓</span> Escalates to your team with full context</li>
+                    <li><span class="check">✓</span> Bring your own model, or use ours</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
     <div v-else class="loading-screen">
         <div class="loading-spinner"></div>
     </div>
 </template>
 
 <style scoped>
-.setup {
+/* Deliberately the same structure and tokens as LoginView: sign-in and sign-up
+   are one continuous surface, and a customer moving between them should not
+   feel a seam. */
+.auth-page {
     min-height: 100vh;
-    background: var(--background-color);
+    display: grid;
+    grid-template-columns: 1.02fr .98fr;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
 }
 
-.container {
+/* ── Form panel ── */
+.form-panel {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    padding-top: var(--space-2xl);
-    padding-bottom: var(--space-2xl);
-}
-
-.setup-header {
-    width: 100%;
-    max-width: 600px;
-    margin-bottom: var(--space-2xl);
-}
-
-.gradient-text {
-    background: linear-gradient(to right, var(--accent-solid), var(--secondary-color));
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: var(--space-md);
-}
-
-.subtitle {
-    font-size: var(--text-lg);
-}
-
-.setup-progress {
-    width: 100%;
-    max-width: 800px;
-    margin-bottom: var(--space-2xl);
-}
-
-.setup-content {
-    width: 100%;
-    display: flex;
     justify-content: center;
+    padding: 60px 56px;
+    background: var(--bg);
+    min-height: 100vh;
+    min-height: 100dvh;
 }
 
-.setup-form {
-    width: 100%;
-}
-
-.form-actions {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: var(--space-xl);
-}
-
-.setup-navigation {
-    display: flex;
-    justify-content: space-between;
-    margin-top: var(--space-xl);
-    padding-top: var(--space-xl);
-    border-top: 1px solid var(--border-color);
+.install-hint-slot {
+    display: none;
+    margin-top: var(--space-lg);
+    padding-bottom: var(--safe-bottom);
 }
 
 @media (max-width: 768px) {
-    .setup {
-        padding: var(--space-xl) var(--space-md);
-    }
+    .install-hint-slot { display: block; }
+}
+
+.auth-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 40px;
+}
+
+.logo-mark {
+    width: 32px;
+    height: 32px;
+    background: var(--accent-solid);
+    border-radius: 10px 10px 10px 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3.5px;
+    flex-shrink: 0;
+}
+
+.dot {
+    width: 4.5px;
+    height: 4.5px;
+    background: var(--on-accent);
+    border-radius: 50%;
+}
+
+.logo-word {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+    color: var(--text);
+}
+
+.auth-title {
+    font-family: var(--font-display);
+    font-size: 40px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    margin-bottom: 10px;
+    line-height: 1.1;
+}
+
+.auth-sub {
+    color: var(--muted);
+    font-size: 15px;
+    margin-bottom: 32px;
+    max-width: 400px;
+    line-height: 1.55;
+}
+
+.auth-sub strong { color: var(--text); font-weight: 600; }
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-width: 400px;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.field label {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text3);
+}
+
+.field input {
+    width: 100%;
+    padding: 14px 16px;
+    background: var(--o04);
+    border: 1px solid var(--o12);
+    border-radius: 12px;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+.field input::placeholder { color: var(--faint); }
+
+.field input:focus {
+    outline: none;
+    border-color: var(--accent-ink);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-ink) 15%, transparent);
+}
+
+.field input.invalid {
+    border-color: color-mix(in srgb, var(--c-coral) 60%, transparent);
+}
+
+.field input:-webkit-autofill,
+.field input:-webkit-autofill:hover,
+.field input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 1000px var(--bg2) inset !important;
+    -webkit-text-fill-color: var(--text) !important;
+    caret-color: var(--text);
+    border: 1px solid var(--o12) !important;
+    transition: background-color 9999s ease-in-out 0s;
+}
+
+.field-error {
+    font-size: 12.5px;
+    color: var(--c-coral);
+    margin: 0;
+}
+
+/* Password strength */
+.pw-meter { margin-top: 4px; }
+
+.pw-track {
+    height: 4px;
+    background: var(--o08);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.pw-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.22s ease, background-color 0.22s ease;
+}
+
+.pw-fill.weak { background: var(--c-coral); }
+.pw-fill.medium { background: #e0b341; }
+.pw-fill.strong { background: var(--accent-solid); }
+
+.pw-reqs {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 3px;
+    font-size: 12.5px;
+    color: var(--muted2);
+}
+
+.pw-reqs li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pw-reqs li::before {
+    content: '○';
+    font-size: 10px;
+    color: var(--faint);
+}
+
+.pw-reqs li.met { color: var(--text3); }
+.pw-reqs li.met::before { content: '●'; color: var(--accent-ink); }
+
+.auth-error {
+    color: var(--c-coral);
+    background: color-mix(in srgb, var(--c-coral) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--c-coral) 20%, transparent);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13.5px;
+}
+
+.auth-submit {
+    width: 100%;
+    padding: 15px;
+    background: var(--accent-solid);
+    color: var(--on-accent-solid);
+    border: none;
+    border-radius: 12px;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+    transition: opacity 0.18s;
+}
+
+.auth-submit:hover:not(:disabled) { opacity: 0.88; }
+.auth-submit:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Same pill as the submit button, used where the action is navigation */
+.auth-submit.as-link {
+    display: block;
+    text-align: center;
+    text-decoration: none;
+}
+
+.legal-note {
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--faint);
+    margin: -4px 0 0;
+}
+
+.signup-prompt {
+    text-align: center;
+    font-size: 14px;
+    color: var(--muted2);
+    margin: 0;
+}
+
+.signup-link {
+    color: var(--accent-ink);
+    text-decoration: none;
+    font-weight: 500;
+}
+.signup-link:hover { text-decoration: underline; }
+
+/* ── Brand panel ── */
+.brand-panel {
+    position: relative;
+    background: linear-gradient(160deg, var(--bg-elevated), var(--bg-deep));
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 56px 6vw;
+    min-height: 100vh;
+    border-left: 1px solid var(--o06);
+}
+
+.aurora-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    animation: cm-aurora 14s ease-in-out infinite;
+}
+
+.blob-lime {
+    width: 420px;
+    height: 420px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent-solid) 32%, transparent), color-mix(in srgb, var(--accent-solid) 6%, transparent));
+    top: -80px;
+    right: -60px;
+    animation-duration: 16s;
+}
+
+.blob-purple {
+    width: 360px;
+    height: 360px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--c-purple) 28%, transparent), color-mix(in srgb, var(--c-purple) 4%, transparent));
+    top: 20%;
+    left: -80px;
+    animation-duration: 20s;
+    animation-delay: -5s;
+}
+
+.blob-teal {
+    width: 300px;
+    height: 300px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--c-teal) 22%, transparent), color-mix(in srgb, var(--c-teal) 3%, transparent));
+    bottom: 15%;
+    right: 10%;
+    animation-duration: 18s;
+    animation-delay: -9s;
+}
+
+.brand-copy {
+    position: relative;
+    z-index: 1;
+    max-width: 460px;
+}
+
+.orb {
+    position: relative;
+    width: 120px;
+    height: 120px;
+    margin-bottom: 38px;
+    animation: cm-float 7s ease-in-out infinite;
+}
+
+.orb-glow {
+    position: absolute;
+    inset: -36px;
+    border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent-solid) 20%, transparent), transparent 70%);
+    filter: blur(10px);
+}
+
+.orb-gradient {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg, var(--accent-solid), var(--c-purple), var(--c-teal), var(--c-coral), var(--accent-solid));
+    filter: blur(6px);
+    animation: cm-spin 6s linear infinite;
+}
+
+.orb-core {
+    position: absolute;
+    inset: 24px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, color-mix(in srgb, var(--text) 92%, transparent), color-mix(in srgb, var(--text) 12%, transparent) 55%, transparent 72%);
+    animation: cm-pulse 2.6s ease-in-out infinite;
+}
+
+.orb-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    box-shadow: inset 0 0 26px color-mix(in srgb, var(--bg-deep) 55%, transparent);
+}
+
+.brand-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 14px;
+    border: 1px solid var(--o12);
+    border-radius: 999px;
+    background: var(--o03);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text3);
+    margin-bottom: 26px;
+}
+
+.badge-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-solid);
+    box-shadow: 0 0 10px var(--accent-ink);
+    animation: cm-pulse 2.6s ease-in-out infinite;
+}
+
+.brand-copy h2 {
+    font-family: var(--font-display);
+    font-size: 42px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    line-height: 1.06;
+    margin: 0 0 18px;
+}
+
+.brand-copy h2 em {
+    font-style: normal;
+    color: var(--accent-ink);
+}
+
+.brand-lede {
+    font-size: 17px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin: 0 0 30px;
+}
+
+.feature-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.feature-list li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 15px;
+    color: var(--text3);
+}
+
+.check {
+    color: var(--accent-ink);
+    font-weight: 700;
+    font-size: 14px;
+}
+
+/* ── Responsive ── */
+@media (max-width: 1024px) {
+    .auth-page { grid-template-columns: 1fr; }
+    .brand-panel { display: none; }
+}
+
+@media (max-width: 600px) {
+    .form-panel { padding: 40px 28px; }
+    .auth-title { font-size: 30px; }
+}
+
+/* The form is taller than the sign-in form, so on short viewports it scrolls
+   rather than being vertically centred and clipped at both ends. */
+@media (max-height: 860px) {
+    .form-panel { justify-content: flex-start; padding-top: 44px; padding-bottom: 44px; }
 }
 
 .loading-screen {
@@ -455,219 +804,15 @@ const timeOptions = Array.from({ length: 24 * 4 }, (_, i) => {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--background-color);
+    background: var(--bg);
 }
 
 .loading-spinner {
     width: 40px;
     height: 40px;
-    border: 3px solid var(--border-color);
+    border: 3px solid var(--o12);
     border-radius: 50%;
-    border-top-color: var(--accent-color);
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-.form-hint {
-    font-size: var(--text-sm);
-    color: var(--text-color);
-    opacity: 0.7;
-    margin-top: var(--space-xs);
-}
-
-.password-strength {
-    margin-top: var(--space-sm);
-}
-
-.strength-meter {
-    height: 4px;
-    background: var(--background-mute);
-    border-radius: var(--radius-full);
-    margin-bottom: var(--space-sm);
-}
-
-.strength-bar {
-    height: 100%;
-    border-radius: var(--radius-full);
-    transition: width var(--transition-normal);
-}
-
-.strength-bar.weak {
-    background: var(--error-color);
-}
-
-.strength-bar.medium {
-    background: var(--warning-color);
-}
-
-.strength-bar.strong {
-    background: var(--success-color);
-}
-
-.strength-requirements {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    font-size: var(--text-sm);
-    color: var(--text-color);
-    opacity: 0.7;
-}
-
-.strength-requirements li {
-    margin-bottom: var(--space-xs);
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-}
-
-.strength-requirements li::before {
-    content: '×';
-    color: var(--error-color);
-}
-
-.strength-requirements li.met::before {
-    content: '✓';
-    color: var(--success-color);
-}
-
-.form-input.invalid {
-    border-color: var(--error-color);
-}
-
-.error-hint {
-    font-size: var(--text-sm);
-    color: var(--error-color);
-    margin-top: var(--space-xs);
-}
-
-select.form-input {
-    padding-right: var(--space-xl);
-    appearance: none;
-    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right var(--space-sm) center;
-    background-size: 16px;
-}
-
-.business-hours {
-    background: var(--background-soft);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    padding: var(--space-md);
-}
-
-.day-row {
-    display: flex;
-    align-items: center;
-    padding: var(--space-sm) 0;
-    gap: var(--space-lg);
-}
-
-.day-row:not(:last-child) {
-    border-bottom: 1px solid var(--border-color);
-}
-
-.day-toggle {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    min-width: 120px;
-}
-
-.day-label {
-    font-size: var(--text-sm);
-    color: var(--text-color);
-}
-
-.time-selects {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-}
-
-.time-selects.disabled {
-    opacity: 0.5;
-}
-
-.time-selects select {
-    padding: var(--space-xs) var(--space-sm);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    background: var(--background-mute);
-    color: var(--text-color);
-    font-size: var(--text-sm);
-}
-
-.time-separator {
-    color: var(--text-color);
-    opacity: 0.7;
-    font-size: var(--text-sm);
-}
-
-.toggle {
-    position: relative;
-    display: inline-block;
-    width: 40px;
-    height: 20px;
-}
-
-.toggle input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--background-mute);
-    transition: .4s;
-    border-radius: 34px;
-}
-
-.toggle-slider:before {
-    position: absolute;
-    content: "";
-    height: 16px;
-    width: 16px;
-    left: 2px;
-    bottom: 2px;
-    background-color: white;
-    transition: .4s;
-    border-radius: 50%;
-}
-
-input:checked + .toggle-slider {
-    background-color: var(--accent-solid);
-}
-
-input:checked + .toggle-slider:before {
-    transform: translateX(20px);
-}
-
-@media (max-width: 640px) {
-    .day-row {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: var(--space-sm);
-    }
-    
-    .day-toggle {
-        width: 100%;
-    }
-    
-    .time-selects {
-        width: 100%;
-        justify-content: space-between;
-    }
+    border-top-color: var(--accent-solid);
+    animation: cm-spin 1s linear infinite;
 }
 </style>

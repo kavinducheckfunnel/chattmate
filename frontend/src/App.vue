@@ -17,10 +17,15 @@ limitations under the License.
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
 import { Toaster } from 'vue-sonner'
+import VerifyEmailBanner from '@/components/common/VerifyEmailBanner.vue'
 </script>
 
 <template>
   <Toaster position="top-right" />
+  <!-- Above RouterView so it sits at the top of every authenticated screen.
+       The component decides for itself whether to render — it stays out of the
+       way on the auth screens, which have no signed-in user to prompt. -->
+  <VerifyEmailBanner />
   <RouterView />
 </template>
 
