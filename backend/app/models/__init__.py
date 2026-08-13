@@ -19,6 +19,7 @@ from .organization import Organization
 from .user import User
 from .auth_token import AuthToken, TokenPurpose
 from .plan import Plan
+from .platform_audit import PlatformAuditLog
 from .usage import UsageCounter, current_period
 from .customer import Customer
 from .role import Role
@@ -79,6 +80,7 @@ __all__ = [
     "AuthToken",
     "TokenPurpose",
     "Plan",
+    "PlatformAuditLog",
     "UsageCounter",
     "current_period",
     "Customer",

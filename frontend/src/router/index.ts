@@ -211,6 +211,19 @@ const baseRoutes = [
     },
   },
   {
+    // Platform operator console. Deliberately NOT under /settings: it is not a
+    // setting of any one workspace, and putting it there implies it is.
+    //
+    // No route-level permission entry — the permission system is org-scoped and
+    // has no concept of platform access. The server 404s every /platform
+    // endpoint for non-operators, so an ordinary user who types this URL gets
+    // an empty console that can load nothing.
+    path: '/platform',
+    name: 'platform-console',
+    component: () => import('@/views/PlatformConsoleView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     // Usage is readable by any member: an agent who hits a quota wall needs to
     // see why, and hiding the number turns a clear limit into a mystery.
     path: '/settings/usage',

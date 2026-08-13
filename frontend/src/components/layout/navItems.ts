@@ -20,6 +20,7 @@ import { permissionChecks } from '@/utils/permissions'
 // appear for a page the guard will refuse (People used to do exactly that).
 import { canAccessPath } from '@/router/routePermissions'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
+import { usePlatformAdmin } from '@/composables/usePlatformAdmin'
 
 // Re-exported so nav consumers keep a single import site
 export { NAV_ICONS, navIconSvg } from './navIcons'
@@ -46,6 +47,11 @@ export const PRIMARY_NAV_PATHS = ['/conversations', '/people', '/ai-agents', '/a
 
 export function useNavItems() {
   const { hasEnterpriseModule } = useEnterpriseFeatures()
+  // Resolved by an API probe, so the link appears only for real operators
+  // and disappears as soon as access is revoked. Purely cosmetic — the
+  // server enforces the actual boundary on every request.
+  const { isOperator, check: checkPlatformAdmin } = usePlatformAdmin()
+  checkPlatformAdmin()
 
   // Section membership is explicit rather than inferred from array position:
   // a header can be permission-hidden while one of its items is not (User
@@ -103,6 +109,17 @@ export function useNavItems() {
             icon: 'analytics',
             label: 'Analytics',
             show: canAccessPath('/analytics'),
+          },
+        ],
+      },
+      {
+        section: 'Platform',
+        items: [
+          {
+            to: '/platform',
+            icon: 'org',
+            label: 'Tenants',
+            show: isOperator.value,
           },
         ],
       },

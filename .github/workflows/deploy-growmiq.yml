@@ -66,6 +66,39 @@ jobs:
           [ "$fail" = 0 ] && echo "OK: account recovery wired to the open-source API"
           exit $fail
 
+      - name: Guard the platform-admin boundary
+        # The operator console is the one place that crosses the tenant
+        # boundary on purpose, so its guard has to stay exactly as narrow as it
+        # is. Two ways it could silently widen:
+        #   1. Being rebuilt on the "super_admin" permission, which is
+        #      org-scoped and self-grantable — every tenant admin would become
+        #      a platform operator.
+        #   2. is_platform_admin becoming writable through any API, which would
+        #      turn privilege escalation into a single request.
+        run: |
+          fail=0
+          # Match super_admin used as a permission check, not merely named.
+          # A bare grep for the word fails on the module docstring, which
+          # exists precisely to explain why the permission must not be used
+          # here — the guard would then flag its own rationale.
+          if grep -nE '(require_permissions|require_any_permission|has_permission|check_permissions)\(.*super_admin|["'"'"']super_admin["'"'"'][[:space:]]+in[[:space:]]' backend/app/api/platform_admin.py; then
+            echo "::error file=backend/app/api/platform_admin.py::platform console must not key off the org-scoped, self-grantable super_admin permission"
+            fail=1
+          fi
+          # Only the model, the migration and the grant script may mention the
+          # flag. Anything under app/api/ writing it is an escalation path.
+          if grep -rn 'is_platform_admin' backend/app/api/ | grep -vE 'platform_admin\.py' | grep -q .; then
+            echo "::error::is_platform_admin referenced in an API module other than platform_admin.py"
+            grep -rn 'is_platform_admin' backend/app/api/ | grep -vE 'platform_admin\.py'
+            fail=1
+          fi
+          if grep -rn 'is_platform_admin' backend/app/models/schemas/ 2>/dev/null | grep -q .; then
+            echo "::error::is_platform_admin appears in a request/response schema; it must never be settable over HTTP"
+            fail=1
+          fi
+          [ "$fail" = 0 ] && echo "OK: platform-admin boundary intact"
+          exit $fail
+
       - name: Shell syntax
         run: bash -n scripts/*.sh
 

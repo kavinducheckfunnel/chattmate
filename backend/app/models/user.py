@@ -86,6 +86,17 @@ class User(Base):
     is_email_verified = Column(Boolean, nullable=False, server_default='true')
     email_verified_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Platform operator: may act across ALL tenants.
+    #
+    # A column, deliberately not a Permission. The existing "super_admin"
+    # permission is organization-scoped and self-grantable — any tenant admin
+    # can POST /roles/{their_role_id}/permissions/super_admin — so building
+    # platform access on it would hand every customer's admin the keys to every
+    # other customer's data. Nothing in the permissions or roles API can reach
+    # this column; it is set only by scripts/grant_platform_admin.py, run on the
+    # server by someone who already has shell access.
+    is_platform_admin = Column(Boolean, nullable=False, server_default='false')
+
     # Define relationships
     organization = relationship("Organization", back_populates="users")
     role = relationship("Role", back_populates="users")

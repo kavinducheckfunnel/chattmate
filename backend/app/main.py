@@ -21,7 +21,7 @@ os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_apps, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, token, lead_capture, people, tickets, account_auth, usage
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_apps, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, token, lead_capture, people, tickets, account_auth, usage, platform_admin
 from app.api import help_center as help_center_api
 from app.api import help_center_images
 from app.api import channels as channels_api
@@ -175,6 +175,15 @@ app.include_router(
     usage.router,
     prefix=f"{settings.API_V1_STR}/usage",
     tags=["usage"]
+)
+
+# Cross-tenant operator console. Guarded by users.is_platform_admin, which no
+# API can set — see the module docstring for why it is not built on the
+# org-scoped (and self-grantable) super_admin permission.
+app.include_router(
+    platform_admin.router,
+    prefix=f"{settings.API_V1_STR}/platform",
+    tags=["platform"]
 )
 
 app.include_router(
