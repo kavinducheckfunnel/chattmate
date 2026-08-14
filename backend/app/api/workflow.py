@@ -22,6 +22,7 @@ from app.core.logger import get_logger
 from app.database import get_db
 from app.models.user import User
 from app.core.auth import require_permissions
+from app.services.feature_gate import check_feature_access
 from app.services.workflow import WorkflowService
 from app.models.schemas.workflow import WorkflowCreate, WorkflowResponse, WorkflowUpdate
 
@@ -37,11 +38,22 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+WORKFLOW_UPGRADE_MESSAGE = (
+    "Workflow feature is not available in your current plan. "
+    "Please upgrade to access this feature."
+)
+
+
 def check_workflow_feature_access(current_user: User, db: Session):
     """Check if user has access to workflow feature"""
     if not HAS_ENTERPRISE:
-        return  # Allow access in non-enterprise mode
-    
+        # Falls through to this repository's own plan catalog rather than
+        # allowing everything. Previously this returned unconditionally, which
+        # made the plan matrix in the operator console purely decorative.
+        check_feature_access(db, current_user.organization_id, 'workflow',
+                             WORKFLOW_UPGRADE_MESSAGE)
+        return
+
     # Accessible = active/trial/past-due-in-period OR cancelled-but-still-in-
     # paid-period; raises 403 when the org has no accessible plan.
     subscription = require_accessible_subscription(db, current_user.organization_id)

@@ -35,7 +35,8 @@ from app.core.auth import get_current_user, require_permissions
 from app.core.security import create_access_token, create_refresh_token
 from app.core.logger import get_logger
 from app.models.role import Role
-from app.models.permission import Permission, DEFAULT_AGENT_ROLE_PERMISSIONS
+from app.models.permission import Permission
+from app.services import tenant_provisioning
 from app.repositories.organization import OrganizationRepository
 from app.models.agent import Agent
 from app.models.session_to_agent import SessionToAgent
@@ -116,112 +117,30 @@ async def create_organization(
         # length-only it was the weaker of the two — it accepted ten identical
         # lowercase letters.
 
-        # users.email carries a global unique index, so an address can exist in
-        # exactly one tenant. Say so plainly instead of letting the insert fail.
-        normalized_email = org_data.admin_email.strip().lower()
-        if db.query(User.id).filter(User.email == normalized_email).first():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="An account with this email already exists. Try signing in instead."
-            )
-
-        # organizations.domain is likewise globally unique and non-null.
-        normalized_domain = org_data.domain.strip().lower()
-        if db.query(Organization.id).filter(Organization.domain == normalized_domain).first():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This domain is already registered to another workspace."
-            )
-
-        # Create organization
-        org_repo = OrganizationRepository(db)
-        organization = org_repo.create_organization(
+        # Organization, roles and owner all come from one provisioning service,
+        # shared with the operator console's "add customer" path. Written twice
+        # the two drifted — a tenant created one way ended up with a different
+        # permission set from one created the other, and nothing surfaced it
+        # until a user hit the single permission the other path granted.
+        organization, admin = tenant_provisioning.provision_tenant(
+            db,
             name=org_data.name,
-            domain=normalized_domain,
+            domain=org_data.domain,
             timezone=org_data.timezone,
-            business_hours=org_data.business_hours
+            admin_name=org_data.admin_name,
+            admin_email=org_data.admin_email,
+            admin_password=org_data.admin_password,
+            business_hours=org_data.business_hours,
+            # Public signup starts unverified: the address is an unproven claim
+            # by a stranger, and this gate is the thing that proves it. The
+            # column default is server-side `true` so a migration could backfill
+            # existing accounts, which is exactly why it is passed explicitly.
+            email_verified=False,
         )
 
-        # Put the tenant on the default plan explicitly.
-        #
-        # The quota service falls back to the default when plan_code is NULL, so
-        # limits are enforced either way — which is exactly why this was easy to
-        # miss. What NULL breaks is everything that reads the column rather than
-        # calling the service: the operator console shows "no plan", and billing
-        # has no tier to attach a subscription to. Store the answer, don't infer
-        # it on every read.
-        default_plan = db.query(Plan).filter(
-            Plan.is_default == True, Plan.is_active == True
-        ).first()
-        if default_plan:
-            organization.plan_code = default_plan.code
-        else:
-            logger.warning(
-                "No default plan in the catalog; organization %s created without one",
-                organization.id,
-            )
-
-        # Note: no default agent is created here. New orgs start with zero
-        # agents so the guided onboarding flow (Create → Teach → Test → Launch)
-        # is what creates the first agent.
-
-        # Get or create default permissions
-        permissions = {}
-        for name, description in Permission.default_permissions():
-            # Try to get existing permission
-            perm = db.query(Permission).filter(Permission.name == name).first()
-            if not perm:
-                perm = Permission(name=name, description=description)
-                db.add(perm)
-                db.flush()
-            permissions[name] = perm
-
-        # Create default roles. Exactly one must be is_default: nothing enforces
-        # that, and get_default_role() just takes .first() with no ordering, so
-        # two defaults means a newly invited user lands on whichever row the
-        # database happens to yield. It has to be Agent — the org creator is
-        # given Admin explicitly below.
-        admin_role = Role(
-            name="Admin",
-            description="Full access to all features",
-            organization_id=organization.id,
-            is_default=False
-        )
-        admin_role.permissions = list(permissions.values())  # All permissions
-        db.add(admin_role)
-
-        agent_role = Role(
-            name="Agent",
-            description="Access to assigned chats and the unclaimed AI queue",
-            organization_id=organization.id,
-            is_default=True
-        )
-        agent_role.permissions = [
-            permissions[name] for name in DEFAULT_AGENT_ROLE_PERMISSIONS
-        ]
-        db.add(agent_role)
-        db.flush()
-
-        # Create admin user with admin role.
-        #
-        # is_email_verified is set explicitly rather than left to the column
-        # default. That default is server-side `true` so the migration could
-        # backfill existing accounts as verified; relying on it here would make
-        # every new self-serve signup verified on arrival, which is exactly the
-        # check we are adding. Invited teammates keep the default — an admin
-        # typed their address and hands them the password directly, so there is
-        # no unproven claim to verify.
-        admin = User(
-            email=normalized_email,
-            full_name=org_data.admin_name,
-            hashed_password=User.get_password_hash(org_data.admin_password),
-            organization_id=organization.id,
-            role_id=admin_role.id,
-            is_active=True,
-            is_email_verified=False,
-        )
-        db.add(admin)
-        db.flush()
+        # No default agent is created here. New orgs start with zero agents so
+        # the guided onboarding flow (Create -> Teach -> Test -> Launch) is what
+        # creates the first one.
 
         # Send the verification mail before issuing any session, so a hard-gated
         # deployment never hands out a token it would immediately reject.
@@ -249,7 +168,7 @@ async def create_organization(
                     "email": admin.email,
                     "full_name": admin.full_name,
                     "organization_id": organization.id,
-                    "role": admin_role.to_dict()
+                    "role": admin.role.to_dict()
                 }
             }
 
@@ -285,7 +204,7 @@ async def create_organization(
                 "full_name": admin.full_name,
                 "organization_id": str(organization.id),
                 "is_email_verified": admin.is_email_verified,
-                "role": admin_role.to_dict()
+                "role": admin.role.to_dict()
             }, default=str)),
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
             secure=True,  # Required when samesite="none"
@@ -315,7 +234,7 @@ async def create_organization(
                 "email": admin.email,
                 "full_name": admin.full_name,
                 "organization_id": organization.id,
-                "role": admin_role.to_dict()
+                "role": admin.role.to_dict()
             }
         }
 

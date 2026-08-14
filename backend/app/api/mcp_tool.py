@@ -20,6 +20,7 @@ from app.core.logger import get_logger
 from app.database import get_db
 from app.models.user import User
 from app.core.auth import get_current_user, require_permissions
+from app.services.feature_gate import check_feature_access
 from app.repositories.mcp_tool import MCPToolRepository
 from app.repositories.agent import AgentRepository
 
@@ -43,11 +44,20 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+MCP_UPGRADE_MESSAGE = (
+    "MCP Tools feature is not available in your current plan. "
+    "Please upgrade to access this feature."
+)
+
+
 def check_mcp_feature_access(current_user: User, db: Session):
     """Check if user has access to MCP tools feature"""
     if not HAS_ENTERPRISE:
-        return  # Allow access in non-enterprise mode
-    
+        # Defers to this repository's plan catalog — see workflow.py for why.
+        check_feature_access(db, current_user.organization_id, 'mcp_tools',
+                             MCP_UPGRADE_MESSAGE)
+        return
+
     # Accessible = active/trial/past-due-in-period OR cancelled-but-still-in-
     # paid-period; raises 403 when the org has no accessible plan.
     subscription = require_accessible_subscription(db, current_user.organization_id)

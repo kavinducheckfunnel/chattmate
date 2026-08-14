@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
+from app.services.feature_gate import check_feature_access
 from app.models.user import User
 from app.core.auth import require_permissions
 from app.repositories.user_group import UserGroupRepository
@@ -47,6 +48,11 @@ async def create_group(
     db: Session = Depends(get_db)
 ):
     """Create a new group"""
+    check_feature_access(
+        db, current_user.organization_id, "user_groups",
+        "Team groups are not available in your current plan. "
+        "Please upgrade to organise agents into groups.",
+    )
     group_repo = UserGroupRepository(db)
     return group_repo.create_group(
         name=group_data.name,

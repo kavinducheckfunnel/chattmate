@@ -249,3 +249,252 @@ export const updatePlan = async (code: string, changes: Record<string, unknown>)
 
 export const getOperators = async (): Promise<Operator[]> =>
   (await api.get<Operator[]>('/platform/operators')).data
+
+// ── Overview, analytics and health ──────────────────────────────────────────
+
+export interface PlanRevenueRow {
+  code: string
+  name: string
+  tenants: number
+  price_cents: number
+  mrr_cents: number
+}
+
+export interface Revenue {
+  mrr_cents: number
+  currency: string
+  active_tenants: number
+  paying_tenants: number
+  arpa_cents: number
+  by_plan: PlanRevenueRow[]
+}
+
+export interface RevenuePoint {
+  period: string
+  mrr_cents: number | null
+  active_tenants: number | null
+  paying_tenants: number | null
+  /** False for months before the platform began recording — draw a gap, not a zero. */
+  recorded: boolean
+}
+
+export interface UsagePoint {
+  period: string
+  conversations: number
+  ai_messages: number
+}
+
+export interface Overview {
+  period: string
+  organizations: { total: number; active: number; suspended: number; new_this_month: number }
+  users: number
+  agents: number
+  usage: { conversations: number; ai_messages: number }
+  revenue: Revenue
+  revenue_history: RevenuePoint[]
+  usage_history: UsagePoint[]
+  recent_organizations: {
+    id: string
+    name: string
+    domain: string
+    plan_code: string | null
+    is_active: boolean
+    created_at: string | null
+  }[]
+}
+
+export const getOverview = async (): Promise<Overview> =>
+  (await api.get<Overview>('/platform/overview')).data
+
+export interface PlatformAnalytics {
+  range: string
+  since: string
+  conversations: {
+    total: number
+    messages: number
+    handovers: number
+    ai_only: number
+    by_status: Record<string, number>
+    daily: { date: string; count: number }[]
+  }
+  channels: { channel: string; count: number }[]
+  satisfaction: { average: number | null; responses: number }
+  knowledge: { sources: number }
+  top_organizations: {
+    id: string
+    name: string
+    domain: string
+    plan_code: string | null
+    conversations: number
+  }[]
+}
+
+export const getPlatformAnalytics = async (range: '7d' | '30d' | '90d'): Promise<PlatformAnalytics> =>
+  (await api.get<PlatformAnalytics>('/platform/analytics', { params: { range } })).data
+
+export interface ServiceProbe {
+  name: string
+  status: 'operational' | 'down'
+  latency_ms: number
+  detail: string
+}
+
+export interface PlatformHealth {
+  status: 'operational' | 'degraded' | 'down'
+  checked_at: string
+  api_uptime_seconds: number
+  services: ServiceProbe[]
+  counts: Record<string, number>
+}
+
+export const getPlatformHealth = async (): Promise<PlatformHealth> =>
+  (await api.get<PlatformHealth>('/platform/health')).data
+
+// ── Tenant and user management ──────────────────────────────────────────────
+
+export interface TenantCreateInput {
+  name: string
+  domain: string
+  admin_name: string
+  admin_email: string
+  admin_password: string
+  plan_code?: string
+  timezone?: string
+}
+
+export const createTenant = async (input: TenantCreateInput) =>
+  (await api.post('/platform/tenants', input)).data
+
+export interface PlatformUser {
+  id: string
+  email: string
+  full_name: string
+  is_active: boolean
+  is_email_verified: boolean
+  /** Operator accounts are listed but not editable here — the UI marks them. */
+  is_platform_admin: boolean
+  role: string | null
+  organization_id: string | null
+  organization_domain: string | null
+  organization_name: string | null
+  created_at: string | null
+}
+
+export const listPlatformUsers = async (params: {
+  q?: string
+  organization_id?: string
+  role?: string
+  is_active?: boolean
+  limit?: number
+  offset?: number
+} = {}): Promise<{ total: number; limit: number; offset: number; users: PlatformUser[] }> =>
+  (await api.get('/platform/users', { params })).data
+
+export interface TenantRole {
+  id: string
+  name: string
+  description: string | null
+  is_default: boolean
+}
+
+export const listTenantRoles = async (organizationId: string): Promise<TenantRole[]> =>
+  (await api.get<TenantRole[]>('/platform/roles', { params: { organization_id: organizationId } })).data
+
+export const createPlatformUser = async (input: {
+  organization_id: string
+  full_name: string
+  email: string
+  password: string
+  role_id?: string
+}) => (await api.post('/platform/users', input)).data
+
+export const updatePlatformUserRole = async (userId: string, roleId: string) =>
+  (await api.patch(`/platform/users/${userId}/role`, { role_id: roleId })).data
+
+/** `confirmEmail` must match exactly; the server enforces it, not the UI. */
+export const deletePlatformUser = async (userId: string, confirmEmail: string) =>
+  (await api.delete(`/platform/users/${userId}`, { data: { confirm_email: confirmEmail } })).data
+
+// ── Feature matrix ──────────────────────────────────────────────────────────
+
+export interface FeatureDef {
+  key: string
+  label: string
+  category: string
+  description: string
+  /** Where the gate actually runs. Shown so no switch looks more powerful than it is. */
+  enforced_at: string
+}
+
+export interface FeatureMatrix {
+  features: FeatureDef[]
+  plans: {
+    code: string
+    name: string
+    price_cents: number
+    /** False when nothing has been set for this plan — which means unrestricted, not empty. */
+    configured: boolean
+    features: Record<string, boolean>
+  }[]
+}
+
+export const getFeatureMatrix = async (): Promise<FeatureMatrix> =>
+  (await api.get<FeatureMatrix>('/platform/features')).data
+
+export const setPlanFeatures = async (planCode: string, features: Record<string, boolean>) =>
+  (await api.put(`/platform/plans/${planCode}/features`, { features })).data
+
+export interface TenantFeature extends FeatureDef {
+  plan_default: boolean
+  /** null when the tenant simply follows their plan. */
+  override: boolean | null
+  effective: boolean
+}
+
+export const getTenantFeatures = async (
+  id: string,
+): Promise<{
+  organization_id: string
+  plan_code: string | null
+  plan_configured: boolean
+  features: TenantFeature[]
+}> => (await api.get(`/platform/tenants/${id}/features`)).data
+
+/** `isEnabled: null` clears the override, returning the tenant to their plan. */
+export const setTenantFeature = async (
+  id: string,
+  featureKey: string,
+  isEnabled: boolean | null,
+  reason?: string,
+) => (await api.put(`/platform/tenants/${id}/features`, {
+  feature_key: featureKey, is_enabled: isEnabled, reason,
+})).data
+
+// ── AI configuration ────────────────────────────────────────────────────────
+
+export interface TenantAIConfig {
+  organization_id: string
+  organization_name: string
+  domain: string
+  plan_code: string | null
+  model_type: string | null
+  model_name: string
+  is_active: boolean
+  updated_at: string | null
+}
+
+export interface AIConfigOverview {
+  platform_default: { model_name: string | null; configured: boolean; note: string }
+  by_model: { model: string; workspaces: number }[]
+  workspaces: TenantAIConfig[]
+  /** Workspaces with no model set — the usual reason an agent never answers. */
+  unconfigured: {
+    organization_id: string
+    organization_name: string
+    domain: string
+    plan_code: string | null
+  }[]
+}
+
+export const getAIConfiguration = async (): Promise<AIConfigOverview> =>
+  (await api.get<AIConfigOverview>('/platform/ai')).data

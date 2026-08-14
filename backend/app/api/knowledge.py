@@ -25,6 +25,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import text
 from uuid import UUID
 from app.database import get_db
+from app.services.feature_gate import check_feature_access
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.models.agent import Agent
 from app.models.knowledge import Knowledge
@@ -53,6 +54,19 @@ except ImportError:
     HAS_ENTERPRISE = False
 
 router = APIRouter()
+
+KNOWLEDGE_UPGRADE_MESSAGE = (
+    "The knowledge base is not available in your current plan. "
+    "Please upgrade to train agents on your own content."
+)
+
+
+def _require_knowledge(db, current_user) -> None:
+    """Gate the ingest endpoints. Reads stay open on every plan so a tenant
+    whose plan changed can still see and remove what they already uploaded."""
+    check_feature_access(db, current_user.organization_id, "knowledge_base",
+                         KNOWLEDGE_UPGRADE_MESSAGE)
+
 logger = get_logger(__name__)
 
 # Add this near the top of the file with other constants
@@ -180,6 +194,7 @@ async def upload_pdf_files(
     db: Session = Depends(get_db)
 ):
     """Upload PDF files to knowledge base"""
+    _require_knowledge(db, current_user)
     try:
         # Convert org_id string to UUID for comparison
         try:
@@ -425,6 +440,7 @@ async def add_urls(
     db: Session = Depends(get_db)
 ):
     """Add URLs to knowledge base"""
+    _require_knowledge(db, current_user)
     try:
         # Verify organization access
         if current_user.organization_id != request.org_id:
@@ -574,6 +590,7 @@ async def add_text_source(
     db: Session = Depends(get_db)
 ):
     """Create a knowledge source from pasted text and index it immediately."""
+    _require_knowledge(db, current_user)
     try:
         if current_user.organization_id != request.org_id:
             raise HTTPException(status_code=403, detail="Unauthorized access to organization")

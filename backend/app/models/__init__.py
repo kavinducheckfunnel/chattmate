@@ -19,7 +19,12 @@ from .organization import Organization
 from .user import User
 from .auth_token import AuthToken, TokenPurpose
 from .plan import Plan
+from .feature import (
+    FEATURE_CATALOG, FEATURE_KEYS, FEATURES_BY_KEY, FeatureCategory, FeatureDef,
+    OrganizationFeatureOverride, PlanFeature,
+)
 from .platform_audit import PlatformAuditLog
+from .platform_metric import PlatformMetric
 from .usage import UsageCounter, current_period
 from .customer import Customer
 from .role import Role

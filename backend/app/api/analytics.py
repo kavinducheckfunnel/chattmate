@@ -17,6 +17,7 @@ limitations under the License.
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.services.feature_gate import check_feature_access
 from app.core.auth import get_current_user, require_permissions
 from app.models.user import User
 from app.models.agent import Agent
@@ -32,6 +33,22 @@ from uuid import UUID
 
 logger = get_logger(__name__)
 router = APIRouter()
+
+ANALYTICS_UPGRADE_MESSAGE = (
+    "Analytics is not available in your current plan. "
+    "Please upgrade to see conversation reports."
+)
+
+
+def _require_analytics(db, current_user) -> None:
+    """Gate every reporting endpoint in this module on the tenant's plan.
+
+    One helper rather than a decorator so the call site stays visible in each
+    handler — a reader can see the gate without knowing about the decorator.
+    """
+    check_feature_access(db, current_user.organization_id, "analytics",
+                         ANALYTICS_UPGRADE_MESSAGE)
+
 
 def get_time_range_dates(time_range: str) -> tuple[datetime, datetime]:
     """Get start and end dates based on time range"""
@@ -69,6 +86,7 @@ async def get_agent_performance(
     current_user: User = Depends(require_permissions("view_analytics"))
 ):
     """Get agent performance analytics data for the organization"""
+    _require_analytics(db, current_user)
     try:
         start_date, end_date = get_time_range_dates(time_range)
         org_id = current_user.organization_id
@@ -176,6 +194,7 @@ async def get_analytics(
     current_user: User = Depends(require_permissions("view_analytics"))
 ):
     """Get analytics data for the organization"""
+    _require_analytics(db, current_user)
     try:
         start_date, end_date = get_time_range_dates(time_range)
         interval = get_interval(time_range)
@@ -386,6 +405,7 @@ async def get_customer_analytics(
     current_user: User = Depends(require_permissions("view_analytics"))
 ):
     """Get customer analytics data for the organization"""
+    _require_analytics(db, current_user)
     try:
         start_date, end_date = get_time_range_dates(time_range)
         org_id = current_user.organization_id
@@ -525,6 +545,7 @@ async def get_sentiment_analytics(
     current_user: User = Depends(require_permissions("view_analytics"))
 ):
     """Get sentiment distribution and trends for the organization"""
+    _require_analytics(db, current_user)
     try:
         start_date, end_date = get_time_range_dates(time_range)
         interval = get_interval(time_range)

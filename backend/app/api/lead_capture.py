@@ -23,6 +23,7 @@ from app.database import get_db
 from app.core.auth import require_any_permission, require_permissions
 from app.models.user import User
 from app.models.agent import Agent
+from app.services.feature_gate import check_feature_access
 from app.repositories.lead_capture import LeadCaptureConfigRepository
 from app.models.schemas.lead_capture import (
     LeadCaptureConfigUpdate, LeadCaptureConfigResponse,
@@ -42,11 +43,20 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+LEAD_CAPTURE_UPGRADE_MESSAGE = (
+    "Lead Capture is not available in your current plan. "
+    "Please upgrade to access this feature."
+)
+
+
 def check_lead_capture_access(current_user: User, db: Session) -> None:
     """Gate Lead Capture behind the Pro plan when the enterprise module is present.
     Requires an accessible subscription whose plan has the 'lead_capture' feature
     (Pro/Enterprise only — Free and Base do not). OSS deployments are unrestricted."""
     if not HAS_ENTERPRISE:
+        # Defers to this repository's plan catalog — see workflow.py for why.
+        check_feature_access(db, current_user.organization_id, 'lead_capture',
+                             LEAD_CAPTURE_UPGRADE_MESSAGE)
         return
     # Raises 403 when the org has no accessible plan.
     subscription = require_accessible_subscription(db, current_user.organization_id)

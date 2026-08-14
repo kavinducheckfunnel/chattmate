@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
+from app.services.feature_gate import check_feature_access
 from app.models.user import User
 from app.core.auth import (
     check_permissions,
@@ -51,8 +52,16 @@ async def create_role(
     db: Session = Depends(get_db)
 ):
     """Create a new role"""
+    # Reading and assigning the built-in roles stays open on every plan —
+    # gating that would lock a tenant out of their own team settings. Only
+    # authoring new roles is the paid capability.
+    check_feature_access(
+        db, current_user.organization_id, "roles_permissions",
+        "Custom roles are not available in your current plan. "
+        "Please upgrade to create roles beyond the built-in ones.",
+    )
     role_repo = RoleRepository(db)
-    
+
     # Check if default role already exists for org
     if role_data.is_default:
         existing_default = role_repo.get_default_role(current_user.organization_id)

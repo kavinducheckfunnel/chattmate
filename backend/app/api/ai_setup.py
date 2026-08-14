@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.core import config
 from app.core.logger import get_logger
 from app.database import get_db
+from app.services.feature_gate import check_feature_access
 from app.models.user import User
 from app.core.auth import get_current_user, require_permissions
 from app.repositories.ai_config import AIConfigRepository
@@ -42,11 +43,20 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+CUSTOM_MODELS_UPGRADE_MESSAGE = (
+    "Custom Models feature is not available in your current plan. "
+    "Please upgrade to access this feature."
+)
+
+
 def check_custom_models_feature_access(current_user: User, db: Session):
     """Check if user has access to custom models feature"""
     if not HAS_ENTERPRISE:
-        return  # Allow access in non-enterprise mode
-    
+        # Defers to this repository's plan catalog — see workflow.py for why.
+        check_feature_access(db, current_user.organization_id, 'custom_models',
+                             CUSTOM_MODELS_UPGRADE_MESSAGE)
+        return
+
     # Accessible = active/trial/past-due-in-period OR cancelled-but-still-in-
     # paid-period; raises 403 when the org has no accessible plan.
     subscription = require_accessible_subscription(db, current_user.organization_id)

@@ -23,6 +23,7 @@ import secrets
 import uuid
 
 from app.database import get_db
+from app.services.feature_gate import check_feature_access
 from app.services.jira import JiraService
 from app.models.jira import JiraToken, AgentJiraConfig
 from app.models.agent import Agent
@@ -175,6 +176,11 @@ async def authorize_jira(
     """
     Start the Jira OAuth flow by redirecting to Jira's authorization page.
     """
+    check_feature_access(
+        db, organization.id, "jira",
+        "The Jira integration is not available in your current plan. "
+        "Please upgrade to link conversations to Jira issues.",
+    )
     logger.info(f"Authorizing Jira for organization: {organization.id}")
     
     # Generate a random state for CSRF protection
@@ -475,6 +481,11 @@ async def create_jira_issue(
     """
     Create a new Jira issue.
     """
+    check_feature_access(
+        db, organization.id, "jira",
+        "The Jira integration is not available in your current plan. "
+        "Please upgrade to link conversations to Jira issues.",
+    )
     try:
         # Create the issue using the wrapper method
         result = await jira_service.create_issue(

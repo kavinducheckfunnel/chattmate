@@ -77,28 +77,35 @@ jobs:
         #      turn privilege escalation into a single request.
         run: |
           fail=0
+          # The console spans several modules now. All of them gate through
+          # app/core/platform_auth.py, so all of them are checked — a new one
+          # added without being listed here would be the obvious place to put
+          # a weaker guard.
+          CONSOLE='backend/app/api/platform_admin.py backend/app/api/platform_insights.py backend/app/api/platform_manage.py backend/app/core/platform_auth.py'
           # Match super_admin used as a permission check, not merely named.
           # A bare grep for the word fails on the module docstring, which
           # exists precisely to explain why the permission must not be used
           # here — the guard would then flag its own rationale.
-          if grep -nE '(require_permissions|require_any_permission|has_permission|check_permissions)\(.*super_admin|["'"'"']super_admin["'"'"'][[:space:]]+in[[:space:]]' backend/app/api/platform_admin.py; then
-            echo "::error file=backend/app/api/platform_admin.py::platform console must not key off the org-scoped, self-grantable super_admin permission"
+          if grep -nE '(require_permissions|require_any_permission|has_permission|check_permissions)\(.*super_admin|["'"'"']super_admin["'"'"'][[:space:]]+in[[:space:]]' $CONSOLE; then
+            echo "::error::platform console must not key off the org-scoped, self-grantable super_admin permission"
             fail=1
           fi
-          # Only the model, the migration and the grant script may mention the
-          # flag. Anything under app/api/ writing it is an escalation path.
-          if grep -rn 'is_platform_admin' backend/app/api/ | grep -vE 'platform_admin\.py' | grep -q .; then
-            echo "::error::is_platform_admin referenced in an API module other than platform_admin.py"
-            grep -rn 'is_platform_admin' backend/app/api/ | grep -vE 'platform_admin\.py'
-            fail=1
-          fi
-          # A grep is too blunt here: the field legitimately appears in
-          # UserResponse so the SPA can decide whether to draw the console
-          # link. The violation is it appearing in a model FastAPI parses a
-          # request body into, which this AST check distinguishes.
+          # Reading the flag in app/api/ is legitimate and common — the login
+          # response carries it so the SPA can decide whether to draw the
+          # console link. Writing it is the escalation. A line-oriented search
+          # cannot tell the two apart and fired on correct code, so both the
+          # request-model check and the assignment check are AST-based.
           python3 scripts/check_platform_admin_boundary.py || fail=1
           [ "$fail" = 0 ] && echo "OK: platform-admin boundary intact"
           exit $fail
+
+      - name: Guard the feature catalog
+        # The console renders FEATURE_CATALOG as a matrix of switches an
+        # operator uses to take capabilities away from paying customers. A
+        # switch with no gate behind it says a change was made when none was;
+        # a gate keyed to a string outside the catalog can never be turned on.
+        # Both are silent failures, so they are checked rather than trusted.
+        run: python3 scripts/check_feature_catalog.py
 
       - name: Shell syntax
         run: bash -n scripts/*.sh

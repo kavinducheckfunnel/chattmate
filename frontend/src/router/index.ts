@@ -219,9 +219,22 @@ const baseRoutes = [
     // endpoint for non-operators, so an ordinary user who types this URL gets
     // an empty console that can load nothing.
     path: '/platform',
-    name: 'platform-console',
-    component: () => import('@/views/PlatformConsoleView.vue'),
+    component: () => import('@/layouts/PlatformLayout.vue'),
     meta: { requiresAuth: true },
+    children: [
+      { path: '', redirect: '/platform/overview' },
+      { path: 'overview', name: 'platform-overview', component: () => import('@/views/platform/OverviewView.vue') },
+      { path: 'organizations', name: 'platform-organizations', component: () => import('@/views/platform/OrganizationsView.vue') },
+      { path: 'organizations/:id', name: 'platform-organization', component: () => import('@/views/platform/OrganizationDetailView.vue'), props: true },
+      { path: 'users', name: 'platform-users', component: () => import('@/views/platform/UsersView.vue') },
+      { path: 'plans', name: 'platform-plans', component: () => import('@/views/platform/PlansView.vue') },
+      { path: 'ai', name: 'platform-ai', component: () => import('@/views/platform/AIConfigView.vue') },
+      { path: 'billing', name: 'platform-billing', component: () => import('@/views/platform/BillingView.vue') },
+      { path: 'analytics', name: 'platform-analytics', component: () => import('@/views/platform/AnalyticsView.vue') },
+      { path: 'health', name: 'platform-health', component: () => import('@/views/platform/HealthView.vue') },
+      { path: 'backups', name: 'platform-backups', component: () => import('@/views/platform/BackupsView.vue') },
+      { path: 'audit', name: 'platform-audit', component: () => import('@/views/platform/AuditView.vue') },
+    ],
   },
   {
     // Usage is readable by any member: an agent who hits a quota wall needs to

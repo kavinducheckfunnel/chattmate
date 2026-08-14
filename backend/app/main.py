@@ -21,7 +21,7 @@ os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_apps, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, token, lead_capture, people, tickets, account_auth, usage, platform_admin
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_apps, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, token, lead_capture, people, tickets, account_auth, usage, platform_admin, platform_insights, platform_manage
 from app.api import help_center as help_center_api
 from app.api import help_center_images
 from app.api import channels as channels_api
@@ -182,6 +182,22 @@ app.include_router(
 # org-scoped (and self-grantable) super_admin permission.
 app.include_router(
     platform_admin.router,
+    prefix=f"{settings.API_V1_STR}/platform",
+    tags=["platform"]
+)
+
+# Same prefix and the same guard, split by concern rather than by route:
+# _insights is read-only reporting, _manage holds the cross-tenant writes.
+# Registration order matters — platform_admin owns /tenants/{id}, so the
+# literal paths these add must not shadow it.
+app.include_router(
+    platform_insights.router,
+    prefix=f"{settings.API_V1_STR}/platform",
+    tags=["platform"]
+)
+
+app.include_router(
+    platform_manage.router,
     prefix=f"{settings.API_V1_STR}/platform",
     tags=["platform"]
 )

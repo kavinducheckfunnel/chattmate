@@ -50,6 +50,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
+from app.core.platform_auth import (
+    audit, client_ip, require_org, require_platform_admin,
+)
 from app.core.security import revoke_user_sessions, validate_password_strength
 from app.core.logger import get_logger
 from app.database import get_db
@@ -74,53 +77,14 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # Access control
 # ---------------------------------------------------------------------------
+#
+# The guard and the audit writer moved to app/core/platform_auth.py when the
+# console grew past one module. Re-exported under the original private names so
+# the rest of this file — and the CI guard that reads it — keep working.
 
-async def require_platform_admin(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> User:
-    """Gate every route in this module.
-
-    Re-reads the flag rather than trusting the authenticated object, which may
-    have been loaded from a cached session. Platform access is the highest
-    privilege in the system; revocation must be immediate.
-
-    404, not 403. A tenant admin probing for an operator console should not
-    learn that one exists — 403 confirms the route is real and worth attacking,
-    while 404 is indistinguishable from a typo.
-    """
-    fresh = db.query(User.is_platform_admin).filter(User.id == current_user.id).scalar()
-    if not fresh:
-        logger.warning(
-            "Non-platform user %s (%s) attempted to reach %s",
-            current_user.id, current_user.email, "platform console",
-        )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    return current_user
-
-
-def _client_ip(request: Request) -> str:
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    return forwarded or (request.client.host if request.client else "unknown")
-
-
-def _audit(db: Session, actor: User, request: Request, action: str,
-           org: Optional[Organization] = None, **details) -> None:
-    """Record an operator action. Added to the caller's transaction on purpose.
-
-    Not committed here: the caller commits the change and its audit row
-    together, so a mutation can never be persisted without its record. A
-    separate commit would let one succeed while the other rolled back.
-    """
-    db.add(PlatformAuditLog(
-        actor_user_id=actor.id,
-        actor_email=actor.email,
-        action=action,
-        target_organization_id=org.id if org is not None else None,
-        target_organization_domain=org.domain if org is not None else None,
-        details=details or {},
-        ip_address=_client_ip(request),
-    ))
+_audit = audit
+_require_org = require_org
+_client_ip = client_ip
 
 
 # ---------------------------------------------------------------------------
@@ -433,13 +397,6 @@ async def delete_tenant(
 # ---------------------------------------------------------------------------
 # Client operations: what a tenant has configured
 # ---------------------------------------------------------------------------
-
-def _require_org(db: Session, organization_id: str) -> Organization:
-    org = db.query(Organization).filter(Organization.id == organization_id).first()
-    if not org:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    return org
-
 
 @router.get("/tenants/{organization_id}/agents")
 async def tenant_agents(

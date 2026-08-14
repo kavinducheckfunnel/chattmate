@@ -15,11 +15,24 @@ limitations under the License.
 
 Generic plan-feature gating.
 
-Cloud (enterprise module installed): a feature is available when the org has
-an accessible subscription whose plan carries the feature flag. OSS/community
-deployments are always unrestricted. This generalizes the per-feature gates
-copied across the API layer (lead_capture, mcp_tool, workflow, ...) — new
-features should gate through here instead of minting another copy.
+Two sources of truth, chosen by which one is present:
+
+  * Enterprise module installed (the vendor's cloud): a feature is available
+    when the org has an accessible subscription whose plan carries the flag.
+
+  * Otherwise: the plan catalog in this repository — `plan_features` with
+    per-tenant exceptions in `organization_feature_overrides`, resolved by
+    app/services/features.py. This is what the operator console edits, and
+    wiring it here is what makes that console's feature matrix mean something.
+    Before this, the open-source path returned True unconditionally and every
+    toggle in the product was decoration.
+
+A plan nobody has configured is unrestricted rather than empty — see
+app/services/features.py for why that direction is the safe one.
+
+This generalizes the per-feature gates copied across the API layer
+(lead_capture, mcp_tool, workflow, ...) — new features should gate through here
+instead of minting another copy.
 """
 
 from uuid import UUID
@@ -28,6 +41,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
+from app.services import features as feature_catalog
 
 try:
     from app.enterprise.repositories.plan import PlanRepository
@@ -44,7 +58,17 @@ def feature_allowed(db: Session, organization_id: UUID, feature: str) -> bool:
     hidden) rather than surfacing a 500 — used by public/unauthenticated
     surfaces and background hooks."""
     if not HAS_ENTERPRISE:
-        return True
+        try:
+            return feature_catalog.is_enabled(db, organization_id, feature)
+        except Exception as e:
+            # Fails OPEN here, unlike the enterprise branch. A database hiccup
+            # while reading the catalog must not take a paying customer's
+            # working feature away mid-conversation; the enterprise branch fails
+            # closed because there a lookup failure usually means "no valid
+            # subscription", which is a real denial.
+            logger.error("Feature catalog lookup '%s' failed for org %s: %s",
+                         feature, organization_id, e)
+            return True
     try:
         subscription = require_accessible_subscription(db, organization_id)
         return PlanRepository(db).check_feature_availability(str(subscription.plan_id), feature)
@@ -60,6 +84,8 @@ def check_feature_access(db: Session, organization_id: UUID, feature: str, upgra
     upgrade message when the plan lacks the flag (subscription-level errors
     propagate from the enterprise module)."""
     if not HAS_ENTERPRISE:
+        if not feature_allowed(db, organization_id, feature):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=upgrade_message)
         return
     subscription = require_accessible_subscription(db, organization_id)
     if not PlanRepository(db).check_feature_availability(str(subscription.plan_id), feature):
