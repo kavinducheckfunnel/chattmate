@@ -46,6 +46,11 @@ def mock_queue_repo(mock_queue_item):
     """Create a mock queue repository"""
     repo = MagicMock()
     repo.get_by_id.return_value = mock_queue_item
+    # claim_pending() marks rows PROCESSING under FOR UPDATE SKIP LOCKED and
+    # returns their ids, so a second worker replica takes different rows rather
+    # than embedding the same documents twice. get_pending() is still on the
+    # repository as a plain read, but the worker no longer uses it to take work.
+    repo.claim_pending.return_value = [mock_queue_item.id]
     repo.get_pending.return_value = [mock_queue_item]
     return repo
 
@@ -144,14 +149,14 @@ async def test_run_processor_success(mock_dependencies):
     assert not PROCESSOR_STATUS["is_running"]
     assert PROCESSOR_STATUS["error"] is None
     assert isinstance(PROCESSOR_STATUS["last_run"], str)
-    mock_dependencies['queue_repo'].get_pending.assert_called_once()
+    mock_dependencies['queue_repo'].claim_pending.assert_called_once()
     mock_dependencies['knowledge_manager'].process_knowledge.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_run_processor_no_pending_items(mock_dependencies):
     """Test processor run with no pending items"""
     # Setup
-    mock_dependencies['queue_repo'].get_pending.return_value = []
+    mock_dependencies['queue_repo'].claim_pending.return_value = []
     
     # Execute
     await run_processor()
@@ -164,7 +169,7 @@ async def test_run_processor_error(mock_dependencies):
     """Test error handling in processor run"""
     # Setup
     error_message = "Processor error"
-    mock_dependencies['queue_repo'].get_pending.side_effect = Exception(error_message)
+    mock_dependencies['queue_repo'].claim_pending.side_effect = Exception(error_message)
     
     # Execute and assert exception is raised
     with pytest.raises(Exception, match=error_message):

@@ -411,12 +411,17 @@ async def ai_configuration(
     )
 
     configured_ids = {c.organization_id for c, _ in rows}
-    unconfigured = (
-        db.query(Organization)
-        .filter(~Organization.id.in_(configured_ids) if configured_ids else True)
-        .order_by(Organization.name.asc())
-        .all()
-    )
+    # NOT IN () against an empty set is both a SQL edge case and, spelled as a
+    # bare Python `True` in a filter, an ArgumentError in SQLAlchemy 2. Branch
+    # on the query instead of on the predicate — the "nobody has configured a
+    # model" case is the most likely state on a new deployment, and it is the
+    # one this endpoint exists to report.
+    unconfigured_query = db.query(Organization)
+    if configured_ids:
+        unconfigured_query = unconfigured_query.filter(
+            ~Organization.id.in_(configured_ids)
+        )
+    unconfigured = unconfigured_query.order_by(Organization.name.asc()).all()
 
     by_model: dict[str, int] = {}
     for config, _org in rows:

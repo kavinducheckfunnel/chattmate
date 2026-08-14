@@ -446,9 +446,18 @@ async def add_urls(
         if current_user.organization_id != request.org_id:
             raise HTTPException(status_code=403, detail="Unauthorized access to organization")
 
+        # One knowledge source per URL submitted, across all three kinds this
+        # endpoint accepts. There is no `request.urls` — reading it raised an
+        # AttributeError inside the handler's try block, which surfaced as a
+        # 500 on every call and made URL ingestion unusable.
+        submitted = (
+            len(request.pdf_urls or [])
+            + len(request.websites or [])
+            + len(request.sitemaps or [])
+        )
         usage_service.check(
             db, current_user.organization, "knowledge_docs",
-            amount=max(1, len(request.urls or [])),
+            amount=max(1, submitted),
         )
 
         # Validate the agent (format + ownership) once, up front.

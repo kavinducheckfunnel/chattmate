@@ -206,7 +206,7 @@ def test_create_organization(client, db, monkeypatch):
         },
         "admin_email": "admin@new.com",
         "admin_name": "Admin User",
-        "admin_password": "adminpass123"
+        "admin_password": "AdminPass123!"
         
     }
 
@@ -317,9 +317,39 @@ def test_get_organization_stats(client, test_organization, test_user):
     assert data["active_users"] == 1
 
 
+
+def _signup_payload(*, name: str, domain: str, admin_email: str) -> dict:
+    """A valid signup body, varying only what a given test is about."""
+    return {
+        "name": name,
+        "domain": domain,
+        "timezone": "UTC",
+        "business_hours": {
+            day: {"start": "09:00", "end": "17:00", "enabled": day not in ("saturday", "sunday")}
+            for day in ("monday", "tuesday", "wednesday", "thursday", "friday",
+                        "saturday", "sunday")
+        },
+        "admin_email": admin_email,
+        "admin_name": "Test Admin",
+        # Must satisfy validate_password_strength(): three of uppercase,
+        # lowercase, number, special character.
+        "admin_password": "AdminPass123!",
+    }
+
+
 # Negative test cases
-def test_create_organization_duplicate(client, test_organization):
-    """Test creating organization when one already exists"""
+def test_create_organization_when_one_already_exists(client, test_organization):
+    """A second workspace is allowed — this product is multi-tenant.
+
+    Upstream returned 403 "Organization already exists" here, which is what made
+    the community edition single-tenant: the second customer to sign up was
+    refused. That lock is gone, and .github/workflows/deploy-growmiq.yml fails
+    the build if it ever comes back, so this asserts the opposite of what it
+    used to.
+
+    The real conflicts are per-account, not per-platform, and are covered by the
+    two tests below.
+    """
     org_data = {
         "name": "Another Organization",
         "domain": "another.com",
@@ -335,12 +365,38 @@ def test_create_organization_duplicate(client, test_organization):
         },
         "admin_email": "admin@another.com",
         "admin_name": "Another Admin",
-        "admin_password": "adminpass123"
+        "admin_password": "AdminPass123!"
     }
 
     response = client.post("/api/v1/organizations", json=org_data)
-    assert response.status_code == 403
-    assert "Organization already exists" in response.json()["detail"]
+    assert response.status_code == 201, response.text
+    assert response.json()["domain"] == "another.com"
+
+
+def test_create_organization_rejects_duplicate_domain(client, test_organization):
+    """organizations.domain is globally unique, so say so rather than 500."""
+    org_data = _signup_payload(
+        name="Domain Clash",
+        domain=test_organization.domain,
+        admin_email="someone-else@clash.com",
+    )
+
+    response = client.post("/api/v1/organizations", json=org_data)
+    assert response.status_code == 409
+    assert "domain" in response.json()["detail"].lower()
+
+
+def test_create_organization_rejects_duplicate_admin_email(client, test_organization, test_user):
+    """users.email is globally unique — an address belongs to one workspace."""
+    org_data = _signup_payload(
+        name="Email Clash",
+        domain="email-clash.com",
+        admin_email=test_user.email,
+    )
+
+    response = client.post("/api/v1/organizations", json=org_data)
+    assert response.status_code == 409
+    assert "email" in response.json()["detail"].lower()
 
 @requires_email_validation
 def test_create_organization_rejects_disposable_admin_email(client, db):
@@ -367,7 +423,7 @@ def test_create_organization_rejects_disposable_admin_email(client, db):
         },
         "admin_email": "someone@yopmail.com",
         "admin_name": "Throwaway Admin",
-        "admin_password": "adminpass123"
+        "admin_password": "AdminPass123!"
     }
 
     response = client.post("/api/v1/organizations", json=org_data)
