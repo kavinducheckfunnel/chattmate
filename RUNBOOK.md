@@ -357,6 +357,18 @@ These are **not** done yet and matter before real customers:
    on every one of 266 endpoints applying its own `organization_id` filter.
    The 25-probe IDOR sweep is the compensating control, not a substitute for
    PostgreSQL row-level security.
+7. **No payments are collected.** Plans, prices, metering and quota enforcement
+   all work; nothing charges a card. Needs a Stripe account, then
+   `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in the server `.env`. The
+   Billing screen lists this rather than showing a fake upgrade button — one
+   that changed a plan without taking payment would look finished while giving
+   the product away.
+8. **CI cannot deploy.** The `Deploy` job fails at *Add SSH key* because the
+   `VPS_SSH_KEY` secret is unset, so every deploy so far has been run by hand.
+   The `Multi-tenant checks` job does run and passes on every push. To fix:
+   GitHub → Settings → Secrets and variables → Actions → add `VPS_SSH_KEY`
+   (the private half of `~/.ssh/checkfunnel_ci_deploy`), `VPS_HOST`
+   (`187.77.156.57`) and `VPS_USER` (`root`).
 
 ---
 
@@ -404,10 +416,64 @@ inside `platform_admin.py`.
 
 ### What the console can do
 
-Tenants (search, usage, suspend/reactivate, change plan, delete), plan catalog
-editing, cross-tenant user management (deactivate, reset password), and
-per-tenant inspection: agents, knowledge sources, channels and widgets,
-conversations and full transcripts.
+Eleven screens under `/platform`:
+
+| Screen | What it is for |
+|---|---|
+| Overview | Workspace and user counts, recurring revenue, plan mix, metered volume |
+| Organizations | Search, filter, **create**, suspend, change plan, delete |
+| Organization detail | 8 tabs — overview, members, conversations, features, usage, knowledge, integrations, audit |
+| Users | Cross-tenant search, create, change role, reset password, deactivate, remove; operator list |
+| Plans & Limits | Prices, usage ceilings, and the feature matrix |
+| AI Configuration | Which model each workspace runs, and who has not set one up |
+| Analytics | Conversations, handovers, channel mix, CSAT, busiest workspaces |
+| System Health | Live probes of Postgres, pgvector, Redis, SMTP and disk |
+| Audit Log | Every operator action, searchable, CSV export |
+| Billing | Revenue by plan; states plainly that no payments are collected yet |
+| Backups | States plainly that none exist, and exactly what turning them on needs |
+
+### Plan features are enforced, not decorative
+
+`plan_features` says what a tier includes; `organization_feature_overrides`
+records per-customer exceptions. `app/services/feature_gate.py` resolves both
+on every gated request.
+
+This mattered: before it, `feature_gate` returned `True` unconditionally
+whenever the private enterprise module was absent — which is every deployment of
+this repository — so **every per-plan capability toggle in the product did
+nothing**. Twelve capabilities now gate for real; `scripts/check_feature_catalog.py`
+fails the build if a catalog entry has no enforcing call site, or if a gate
+keys off a string absent from the catalog.
+
+**A plan with no `plan_features` rows is unrestricted, not empty.** The other
+direction would mean deploying before the seed ran — or adding a new plan —
+silently locked every tenant on it out of the whole product at once. The console
+labels an unconfigured plan rather than letting it look like a deliberate
+denial.
+
+```sql
+-- what a tier includes
+SELECT plan_code, feature_key, is_enabled FROM plan_features ORDER BY plan_code;
+
+-- exceptions granted to individual customers
+SELECT o.domain, f.feature_key, f.is_enabled, f.reason, f.created_by_email
+FROM organization_feature_overrides f
+JOIN organizations o ON o.id = f.organization_id;
+```
+
+### Revenue is recorded, not recomputed
+
+`platform_metrics` holds a month-end snapshot of MRR, active tenants and paying
+tenants. Each console read upserts the current month; when the month rolls over
+that last value becomes history.
+
+Recomputing March from today's plan prices would give March's tenants at today's
+prices — a number that never happened. Months with no snapshot come back `null`
+and draw as a gap in the chart rather than a zero, which would read as a
+collapse in revenue.
+
+Recurring revenue here is **derived, not invoiced**: plan price × active
+tenants. Nothing has charged a card — see the Billing screen.
 
 ### What it deliberately cannot do
 
