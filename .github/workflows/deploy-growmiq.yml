@@ -153,6 +153,14 @@ jobs:
         # workflows, knowledge and collection filters. This is the check that
         # would catch a new endpoint shipping without an organization_id guard —
         # the failure mode that has no database-level backstop today.
+        #
+        # The operator credentials are optional but worth setting. Without them
+        # the throwaway tenants stay on the free plan, several fixtures cannot
+        # be created because the capability is gated, and those probes skip —
+        # the run still passes, on a narrower surface than it appears to cover.
+        env:
+          PLATFORM_OPERATOR_EMAIL: ${{ secrets.PLATFORM_OPERATOR_EMAIL }}
+          PLATFORM_OPERATOR_PASSWORD: ${{ secrets.PLATFORM_OPERATOR_PASSWORD }}
         run: |
           ssh -i ~/.ssh/deploy_key "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             'docker exec chattermate-redis-1 redis-cli --scan --pattern "public_rl:signup:*" \

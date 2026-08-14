@@ -28,8 +28,11 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 user_groups = Table(
     'user_groups',
     Base.metadata,
-    Column('user_id', UUID(as_uuid=True), ForeignKey('users.id'), primary_key=True),
-    Column('group_id', UUID(as_uuid=True), ForeignKey('groups.id'), primary_key=True)
+    # CASCADE on both sides: a membership row is meaningless once either
+    # end is gone, and without it deleting a user who belongs to a group
+    # fails on the foreign key rather than removing them.
+    Column('user_id', UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), primary_key=True),
+    Column('group_id', UUID(as_uuid=True), ForeignKey('groups.id', ondelete='CASCADE'), primary_key=True)
 )
 
 class UserGroup(Base):

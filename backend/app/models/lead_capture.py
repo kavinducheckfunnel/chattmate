@@ -82,7 +82,7 @@ class LeadCaptureConfig(Base):
     # Routing config — persisted so the shape is ready for real integration later,
     # but never acted on in phase 1 (no CRM/Slack/assignment side effects).
     assignment_mode = Column(SQLEnum(LeadAssignmentMode), default=LeadAssignmentMode.NONE, server_default="NONE", nullable=False)
-    assignment_target_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    assignment_target_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     crm_sync_target = Column(String(32), default=CrmSyncTarget.NONE.value, server_default="none", nullable=False)
     slack_notify_enabled = Column(Boolean, default=False, server_default=false(), nullable=False)
 

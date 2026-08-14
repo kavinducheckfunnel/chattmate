@@ -40,7 +40,7 @@ class KnowledgeQueue(Base):
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(UUID(as_uuid=True), nullable=False)
     agent_id = Column(UUID(as_uuid=True), nullable=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)  # Nullable for Shopify session token auth
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # Nullable for Shopify session token auth
     # 'pdf_file', 'pdf_url', 'website'
     source_type = Column(String, nullable=False)
     source = Column(String, nullable=False)  # File path or URL

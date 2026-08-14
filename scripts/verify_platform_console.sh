@@ -63,13 +63,19 @@ check "GET /platform/operators" 200 "$(code "$API/platform/operators")"
 echo "==> Tenant routes stay closed to an org-less operator"
 # 403, not 200: these resolve an organization from the session, and there is
 # none. If this ever returns 200 the operator has silently acquired a tenant.
-check "GET /agents (no workspace)" 403 "$(code "$API/agents/list")"
+check "GET /agent/list (no workspace)" 403 "$(code "$API/agent/list")"
 
 echo "==> Per-tenant reads"
-TENANT=$(body "$API/platform/tenants?limit=1" | python3 -c '
+# Prefer a tenant that actually has conversations, so the cross-tenant
+# transcript probe below runs instead of silently skipping. A verification
+# script whose most important check quietly opts out is worse than one that
+# fails, because the summary line still says everything passed.
+TENANT=$(body "$API/platform/tenants?limit=50" | python3 -c '
 import json,sys
 d = json.load(sys.stdin)
-print(d["tenants"][0]["id"] if d.get("tenants") else "")' 2>/dev/null)
+ts = d.get("tenants", [])
+withchat = [t for t in ts if t.get("conversations")]
+print((withchat or ts)[0]["id"] if ts else "")' 2>/dev/null)
 
 if [ -z "$TENANT" ]; then
   echo "  skip  no tenants on this deployment"
@@ -91,11 +97,11 @@ print("ok" if all(k in f for k in ("plan_default", "override", "effective")) els
   check "plan_default / override / effective present" "ok" "$LAYERS"
 
   echo "==> Cross-tenant guard"
-  OTHER=$(body "$API/platform/tenants?limit=5" | python3 -c '
-import json,sys
+  OTHER=$(TENANT="$TENANT" body "$API/platform/tenants?limit=50" | TENANT="$TENANT" python3 -c '
+import json,os,sys
 d = json.load(sys.stdin)
-ids = [t["id"] for t in d.get("tenants", [])]
-print(ids[1] if len(ids) > 1 else "")' 2>/dev/null)
+ids = [t["id"] for t in d.get("tenants", []) if t["id"] != os.environ["TENANT"]]
+print(ids[0] if ids else "")' 2>/dev/null)
   SESSION=$(body "$API/platform/tenants/$TENANT/conversations?limit=1" | python3 -c '
 import json,sys
 d = json.load(sys.stdin)

@@ -6,6 +6,17 @@
 #
 #   ./scripts/tenant_isolation_full.sh [base_url]     # default http://127.0.0.1:8080
 #
+# Optionally, with a platform operator's credentials in the environment:
+#
+#   PLATFORM_OPERATOR_EMAIL=ops@example.com \
+#   PLATFORM_OPERATOR_PASSWORD='...' ./scripts/tenant_isolation_full.sh <url>
+#
+# The throwaway tenants sign up onto the default plan, which does not include
+# every capability. Where a fixture needs a paid one, the probes on it skip.
+# Supplying an operator lets the script move both tenants to the top plan first,
+# so the whole surface is swept. Without it the run is still valid — just
+# narrower, and it says which probes it could not reach.
+#
 # Method: stand up two tenants, create every resource we can as A, then try to
 # reach each one as B. Anything other than 403/404 is a cross-customer leak.
 #
@@ -113,6 +124,35 @@ echo
 
 ORG_A=$(signup "IsoA$S" "iso-a-$S.com" "iso-a-$S@example.com")
 ORG_B=$(signup "IsoB$S" "iso-b-$S.com" "iso-b-$S@example.com")
+
+# Move both tenants to the most expensive plan, so a fixture is never missing
+# merely because the default tier excludes it. Best-effort: no operator, or a
+# failed sign-in, simply leaves them on the default and the affected probes
+# report themselves as skipped.
+if [ -n "${PLATFORM_OPERATOR_EMAIL:-}" ] && [ -n "${PLATFORM_OPERATOR_PASSWORD:-}" ]; then
+  jarOps="$(mktemp)"
+  curl -s -o /dev/null -c "$jarOps" -m 30 -X POST "$API/users/login" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode "username=$PLATFORM_OPERATOR_EMAIL" \
+    --data-urlencode "password=$PLATFORM_OPERATOR_PASSWORD"
+
+  TOP_PLAN=$(curl -s -b "$jarOps" -m 30 "$API/platform/plans" \
+    | python3 -c 'import json,sys
+rows = json.load(sys.stdin)
+rows = [r for r in rows if r.get("is_active")]
+print(max(rows, key=lambda r: r.get("price_cents", 0))["code"] if rows else "")' 2>/dev/null)
+
+  if [ -n "$TOP_PLAN" ]; then
+    for org in "$ORG_A" "$ORG_B"; do
+      curl -s -o /dev/null -b "$jarOps" -m 30 -X PATCH "$API/platform/tenants/$org" \
+        -H 'Content-Type: application/json' -d "{\"plan_code\":\"$TOP_PLAN\"}"
+    done
+    printf '  \033[33m  setup\033[0m test tenants moved to the %s plan so every fixture can be created\n' "$TOP_PLAN"
+  else
+    printf '  \033[33m  setup\033[0m could not read the plan catalog; tenants stay on the default plan\n'
+  fi
+  rm -f "$jarOps"
+fi
 [ -z "$ORG_A" ] || [ -z "$ORG_B" ] && { echo "could not create both tenants (signup closed or rate-limited?)"; exit 1; }
 login "iso-a-$S@example.com" "$jarA"
 login "iso-b-$S@example.com" "$jarB"
@@ -138,11 +178,27 @@ AGENT=$(jget id)
 mkA /widgets "{\"name\":\"IsoWidget\",\"agent_id\":\"$AGENT\"}"
 WIDGET=$(jget id)
 
+# Workflows are a paid capability, and the throwaway tenants this script signs
+# up land on the default (free) plan — so creating the fixture 403s and the
+# probes below skip. That is reported rather than papered over: a probe that
+# never ran must not be counted as one that passed.
 mkA /workflow "{\"name\":\"IsoFlow\",\"agent_id\":\"$AGENT\",\"description\":\"x\"}"
 WORKFLOW=$(jget id)
 
+# Authoring a *custom* role is a paid capability, but every tenant is
+# provisioned with Admin and Agent. Falling back to one of those keeps the
+# privilege-escalation probes running on a free plan — they test whether B can
+# reach A's role at all, which does not depend on how the role was created.
 mkA /roles '{"name":"IsoRole","description":"x","permissions":[]}'
 ROLE=$(jget id)
+if [ -z "$ROLE" ]; then
+  ROLE=$(curl -s -b "$jarA" "$API/roles" \
+    | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+rows = d if isinstance(d, list) else d.get("roles", [])
+print(rows[0]["id"] if rows else "")' 2>/dev/null)
+  [ -n "$ROLE" ] && printf '  \033[33m  setup\033[0m /roles gated on this plan; using the built-in role instead\n'
+fi
 
 ADMIN_A=$(curl -s -b "$jarA" "$API/users" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["id"] if isinstance(d,list) and d else "")' 2>/dev/null)
 

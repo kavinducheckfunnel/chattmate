@@ -34,7 +34,11 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    # CASCADE: a notification addressed to a deleted account is unreachable
+    # and unactionable. Every other reference to users.id below nulls out to
+    # preserve the record; this one is the exception because the row has no
+    # meaning without its recipient.
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     type = Column(SQLEnum(NotificationType), nullable=False)
     title = Column(String, nullable=False)
     message = Column(String, nullable=False)

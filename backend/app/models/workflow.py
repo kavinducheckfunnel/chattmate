@@ -41,7 +41,7 @@ class Workflow(Base):
     default_language = Column(String(10), default="en")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
     canvas_data = Column(JSON, default={})  # Stores canvas view state (zoom, position)
