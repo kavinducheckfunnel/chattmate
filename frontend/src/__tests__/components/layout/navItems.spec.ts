@@ -24,7 +24,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const currentUser = await vi.hoisted(async () => ({ value: null as unknown }))
 
 vi.mock('@/services/user', () => ({
-  userService: { getCurrentUser: () => currentUser.value },
+  userService: {
+    getCurrentUser: () => currentUser.value,
+    // usePlatformAdmin, reached through the nav, asks whether anyone is signed
+    // in before probing the server for console access. A partial mock made the
+    // whole nav throw rather than fail a single assertion.
+    isAuthenticated: () => currentUser.value !== null,
+  },
+}))
+
+// The console link is decided by a server probe. Stubbed so this suite stays a
+// test of permission-driven nav, not of network behaviour.
+vi.mock('@/services/platform', () => ({
+  isPlatformAdmin: () => Promise.resolve(false),
 }))
 
 vi.mock('@/composables/useEnterpriseFeatures', () => ({
@@ -83,8 +95,12 @@ describe('useNavItems', () => {
   })
 
   // The product requirement, as a test: a Human Agent sees the inbox, the
-  // people they talk to, and their own settings. Nothing else.
-  it('shows a Human Agent exactly Inbox, People and User Settings', () => {
+  // people they talk to, their usage, and their own settings. Nothing else.
+  //
+  // Usage is deliberately ungated. An agent who hits a quota wall mid-shift
+  // needs to be able to see why; hiding the number turns a clear limit into a
+  // mystery they have to escalate.
+  it('shows a Human Agent exactly Inbox, People, Usage and User Settings', () => {
     asUser(HUMAN_AGENT_PERMISSIONS)
 
     const { navItems } = useNavItems()
@@ -92,6 +108,7 @@ describe('useNavItems', () => {
     expect(navItems.value.filter((i) => i.to).map((i) => i.to)).toEqual([
       '/conversations',
       '/people',
+      '/settings/usage',
       '/settings/user',
     ])
   })
@@ -160,7 +177,9 @@ describe('useNavItems', () => {
     const { moreNavGroups } = useNavItems()
     const settings = moreNavGroups.value.find((g) => g.section === 'Settings')
 
-    expect(settings?.items.map((i) => i.to)).toEqual(['/settings/user'])
+    // Usage sits here too — see the Human Agent test above for why it is
+    // available to every member regardless of grants.
+    expect(settings?.items.map((i) => i.to)).toEqual(['/settings/usage', '/settings/user'])
     expect(moreNavGroups.value.find((g) => g.section === 'Main Menu')?.items.map((i) => i.to))
       .not.toContain('/settings/user')
   })

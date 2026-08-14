@@ -28,8 +28,20 @@ vi.mock('@/services/user', async () => {
     'manage_knowledge', 'view_analytics', 'view_tickets', 'manage_organization',
     'manage_ai_config', 'manage_subscription',
   ])
-  return { userService: { getCurrentUser: () => user } }
+  return {
+    userService: {
+      getCurrentUser: () => user,
+      // The nav asks usePlatformAdmin whether to draw the console link, and
+      // that starts by checking whether anyone is signed in at all.
+      isAuthenticated: () => true,
+    },
+  }
 })
+
+// Server probe for console access, stubbed so this stays a nav test.
+vi.mock('@/services/platform', () => ({
+  isPlatformAdmin: () => Promise.resolve(false),
+}))
 
 vi.mock('@/composables/useEnterpriseFeatures', () => ({
   useEnterpriseFeatures: () => ({ hasEnterpriseModule: false }),

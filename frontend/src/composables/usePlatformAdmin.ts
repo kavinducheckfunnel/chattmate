@@ -35,19 +35,37 @@ const isOperator = ref(false)
 let probe: Promise<boolean> | null = null
 
 export function usePlatformAdmin() {
+  /**
+   * Never rejects.
+   *
+   * Callers fire this without awaiting — the nav wants the answer whenever it
+   * arrives and renders fine without it — so a rejection here becomes an
+   * unhandled promise rejection with nothing to catch it. Since the only
+   * consequence of failure is "do not draw the link", swallowing is both safe
+   * and the honest behaviour: an operator whose probe failed sees no console
+   * link, which is what they would see if they were not an operator.
+   */
   const check = async (): Promise<boolean> => {
-    if (!userService.isAuthenticated()) {
+    try {
+      if (!userService.isAuthenticated()) {
+        isOperator.value = false
+        return false
+      }
+      // Shared promise: several components mounting at once ask one question.
+      if (!probe) {
+        probe = isPlatformAdmin().then((ok) => {
+          isOperator.value = ok
+          return ok
+        })
+      }
+      return await probe
+    } catch {
+      // Forget the failed probe so the next navigation retries rather than
+      // caching a rejection for the rest of the session.
+      probe = null
       isOperator.value = false
       return false
     }
-    // Shared promise: several components mounting at once ask one question.
-    if (!probe) {
-      probe = isPlatformAdmin().then((ok) => {
-        isOperator.value = ok
-        return ok
-      })
-    }
-    return probe
   }
 
   /** Forget the cached answer — call on logout so the next session re-probes. */

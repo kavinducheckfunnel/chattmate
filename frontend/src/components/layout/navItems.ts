@@ -51,7 +51,10 @@ export function useNavItems() {
   // and disappears as soon as access is revoked. Purely cosmetic — the
   // server enforces the actual boundary on every request.
   const { isOperator, check: checkPlatformAdmin } = usePlatformAdmin()
-  checkPlatformAdmin()
+  // Deliberately not awaited: the nav renders immediately and the link appears
+  // when the answer arrives. check() is documented never to reject, so there is
+  // no rejection to handle here.
+  void checkPlatformAdmin()
 
   // Section membership is explicit rather than inferred from array position:
   // a header can be permission-hidden while one of its items is not (User
