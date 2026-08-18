@@ -28,6 +28,7 @@ import os
 import shutil
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, text
@@ -43,6 +44,7 @@ from app.models.channels.channel_account import ChannelAccount
 from app.models.chat_history import ChatHistory
 from app.models.knowledge import Knowledge
 from app.models.organization import Organization
+from app.models.plan import Plan
 from app.models.rating import Rating
 from app.models.session_to_agent import SessionToAgent
 from app.models.usage import UsageCounter, current_period
@@ -152,6 +154,8 @@ _RANGES = {"7d": 7, "30d": 30, "90d": 90}
 @router.get("/analytics")
 async def analytics(
     range: str = Query("30d", pattern="^(7d|30d|90d)$"),
+    plan_code: Optional[str] = Query(None, description="Restrict to tenants on one plan"),
+    channel: Optional[str] = Query(None, description="Restrict to one channel"),
     _: User = Depends(require_platform_admin),
     db: Session = Depends(get_db),
 ):
@@ -165,9 +169,23 @@ async def analytics(
     days = _RANGES[range]
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
+    # One scope, applied to every query below. Building the filter list once is
+    # what keeps the KPI row, the volume chart and the channel mix describing
+    # the same set of conversations — computing each separately is how a
+    # dashboard ends up contradicting itself.
+    scope = [SessionToAgent.assigned_at >= since]
+    if channel:
+        scope.append(SessionToAgent.channel == channel)
+    if plan_code:
+        scope.append(
+            SessionToAgent.organization_id.in_(
+                select(Organization.id).where(Organization.plan_code == plan_code)
+            )
+        )
+
     total = db.scalar(
         select(func.count()).select_from(SessionToAgent)
-        .where(SessionToAgent.assigned_at >= since)
+        .where(*scope)
     ) or 0
 
     # Outcome is read from the session status rather than inferred from who
@@ -175,7 +193,7 @@ async def analytics(
     # still have been handed over.
     status_rows = db.execute(
         select(SessionToAgent.status, func.count())
-        .where(SessionToAgent.assigned_at >= since)
+        .where(*scope)
         .group_by(SessionToAgent.status)
     ).all()
     by_status = {
@@ -187,18 +205,24 @@ async def analytics(
     # handover and stays null for a conversation the AI handled alone.
     handovers = db.scalar(
         select(func.count()).select_from(SessionToAgent)
-        .where(SessionToAgent.assigned_at >= since, SessionToAgent.user_id.isnot(None))
+        .where(*scope, SessionToAgent.user_id.isnot(None))
     ) or 0
 
     channel_rows = db.execute(
         select(SessionToAgent.channel, func.count())
-        .where(SessionToAgent.assigned_at >= since)
+        .where(*scope)
         .group_by(SessionToAgent.channel)
     ).all()
 
+    # Reuse the scope by session id rather than re-deriving the filter against
+    # ChatHistory, which has no plan or channel of its own. Without this the
+    # KPI row mixed a filtered conversation count with an unfiltered message
+    # count and the two disagreed.
+    scoped_sessions = select(SessionToAgent.session_id).where(*scope)
+
     messages = db.scalar(
         select(func.count()).select_from(ChatHistory)
-        .where(ChatHistory.created_at >= since)
+        .where(ChatHistory.session_id.in_(scoped_sessions))
     ) or 0
 
     # Daily volume, bucketed in the database. Pulling rows and grouping in
@@ -208,14 +232,14 @@ async def analytics(
             func.date_trunc("day", SessionToAgent.assigned_at).label("day"),
             func.count(),
         )
-        .where(SessionToAgent.assigned_at >= since)
+        .where(*scope)
         .group_by(text("day"))
         .order_by(text("day"))
     ).all()
 
     rating_stats = db.execute(
         select(func.avg(Rating.rating), func.count())
-        .where(Rating.created_at >= since)
+        .where(Rating.session_id.in_(scoped_sessions))
     ).first()
     avg_rating = float(rating_stats[0]) if rating_stats and rating_stats[0] is not None else None
     rating_count = int(rating_stats[1] or 0) if rating_stats else 0
@@ -227,7 +251,7 @@ async def analytics(
             Organization.plan_code, func.count(SessionToAgent.session_id),
         )
         .join(SessionToAgent, SessionToAgent.organization_id == Organization.id)
-        .where(SessionToAgent.assigned_at >= since)
+        .where(*scope)
         .group_by(Organization.id, Organization.name, Organization.domain, Organization.plan_code)
         .order_by(func.count(SessionToAgent.session_id).desc())
         .limit(8)
@@ -235,9 +259,49 @@ async def analytics(
 
     knowledge_total = db.scalar(select(func.count()).select_from(Knowledge)) or 0
 
+    # Workspaces that actually had a conversation in the window, which is a
+    # different and more useful number than "workspaces that exist".
+    active_orgs = db.scalar(
+        select(func.count(func.distinct(SessionToAgent.organization_id))).where(*scope)
+    ) or 0
+
+    # Message allowance consumed per plan. Real: metered usage summed across the
+    # tenants on each plan, against that plan's own ceiling. A plan with no
+    # ceiling reports percent=None rather than 0, because unlimited and unused
+    # are not the same state.
+    plan_usage = []
+    for plan in db.query(Plan).order_by(Plan.price_cents.asc()).all():
+        tenant_ids = [
+            row[0] for row in db.execute(
+                select(Organization.id).where(Organization.plan_code == plan.code)
+            ).all()
+        ]
+        if not tenant_ids:
+            continue
+        used = int(db.scalar(
+            select(func.coalesce(func.sum(UsageCounter.value), 0)).where(
+                UsageCounter.organization_id.in_(tenant_ids),
+                UsageCounter.period == current_period(),
+                UsageCounter.metric == "ai_messages",
+            )
+        ) or 0)
+        ceiling = plan.max_ai_messages_per_month
+        allowance = ceiling * len(tenant_ids) if ceiling is not None else None
+        plan_usage.append({
+            "plan_code": plan.code,
+            "plan_name": plan.name,
+            "tenants": len(tenant_ids),
+            "used": used,
+            "allowance": allowance,
+            "percent": None if not allowance else min(100, round(used / allowance * 100)),
+        })
+
     return {
         "range": range,
         "since": since.isoformat(),
+        "filters": {"plan_code": plan_code, "channel": channel},
+        "active_organizations": active_orgs,
+        "plan_usage": plan_usage,
         "conversations": {
             "total": total,
             "messages": messages,

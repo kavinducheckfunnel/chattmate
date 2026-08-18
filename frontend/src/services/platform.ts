@@ -306,9 +306,23 @@ export interface Overview {
 export const getOverview = async (): Promise<Overview> =>
   (await api.get<Overview>('/platform/overview')).data
 
+export interface PlanUsageRow {
+  plan_code: string
+  plan_name: string
+  tenants: number
+  used: number
+  /** null when the plan has no ceiling — unlimited is not the same as unused. */
+  allowance: number | null
+  percent: number | null
+}
+
 export interface PlatformAnalytics {
   range: string
   since: string
+  filters: { plan_code: string | null; channel: string | null }
+  /** Workspaces that had a conversation in the window, not workspaces that exist. */
+  active_organizations: number
+  plan_usage: PlanUsageRow[]
   conversations: {
     total: number
     messages: number
@@ -329,8 +343,13 @@ export interface PlatformAnalytics {
   }[]
 }
 
-export const getPlatformAnalytics = async (range: '7d' | '30d' | '90d'): Promise<PlatformAnalytics> =>
-  (await api.get<PlatformAnalytics>('/platform/analytics', { params: { range } })).data
+export const getPlatformAnalytics = async (
+  range: '7d' | '30d' | '90d',
+  filters: { plan_code?: string; channel?: string } = {},
+): Promise<PlatformAnalytics> =>
+  (await api.get<PlatformAnalytics>('/platform/analytics', {
+    params: { range, ...filters },
+  })).data
 
 export interface ServiceProbe {
   name: string

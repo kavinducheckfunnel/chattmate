@@ -16,7 +16,7 @@ import PfPill from '@/components/platform/ui/PfPill.vue'
 import PfMetric from '@/components/platform/ui/PfMetric.vue'
 import PfDonut from '@/components/platform/ui/PfDonut.vue'
 import PfBars from '@/components/platform/ui/PfBars.vue'
-import { getPlatformAnalytics, type PlatformAnalytics } from '@/services/platform'
+import { getPlatformAnalytics, getPlatformPlans, type PlatformAnalytics, type PlatformPlan } from '@/services/platform'
 import { extractApiError } from '@/utils/apiError'
 import { num, compact, initials } from '@/utils/platformFormat'
 
@@ -25,19 +25,49 @@ const error = ref('')
 const data = ref<PlatformAnalytics | null>(null)
 const range = ref<'7d' | '30d' | '90d'>('30d')
 
+// Scope filters. Applied server-side rather than in the browser: filtering a
+// page of results would silently narrow only what had already been fetched,
+// and every total on the page would then describe a different set.
+const planFilter = ref('')
+const channelFilter = ref('')
+const plans = ref<PlatformPlan[]>([])
+
+const hasFilters = computed(() => !!planFilter.value || !!channelFilter.value)
+const clearFilters = () => { planFilter.value = ''; channelFilter.value = '' }
+
 const load = async () => {
   loading.value = true
   error.value = ''
   try {
-    data.value = await getPlatformAnalytics(range.value)
+    data.value = await getPlatformAnalytics(range.value, {
+      plan_code: planFilter.value || undefined,
+      channel: channelFilter.value || undefined,
+    })
   } catch (e) {
     error.value = extractApiError(e, 'Could not load analytics')
   } finally {
     loading.value = false
   }
 }
-onMounted(load)
-watch(range, load)
+
+onMounted(async () => {
+  await load()
+  try {
+    plans.value = await getPlatformPlans()
+  } catch {
+    plans.value = []
+  }
+})
+
+watch([range, planFilter, channelFilter], load)
+
+// Channel options come from what the data actually contains, so the dropdown
+// can never offer a channel no workspace uses. Kept from the unfiltered load
+// so selecting one does not collapse the list to just that channel.
+const knownChannels = ref<string[]>([])
+watch(data, (d) => {
+  if (d && !hasFilters.value) knownChannels.value = d.channels.map((c) => c.channel)
+}, { immediate: true })
 
 const rangeLabel = computed(
   () => ({ '7d': 'last 7 days', '30d': 'last 30 days', '90d': 'last 90 days' })[range.value],
@@ -65,6 +95,17 @@ const volumeBars = computed(() => {
     })
   }
   return out
+})
+
+const volumeStats = computed(() => {
+  const bars = volumeBars.value
+  if (!bars.length) return null
+  const total = bars.reduce((t, b) => t + b.value, 0)
+  return {
+    total,
+    average: Math.round(total / bars.length),
+    peak: Math.max(...bars.map((b) => b.value)),
+  }
 })
 
 const CHANNEL_COLORS = ['var(--accent-ink)', 'var(--c-teal)', 'var(--c-purple)', 'var(--c-coral)', 'var(--muted2)']
@@ -107,7 +148,45 @@ const outcomeSlices = computed(() => {
     </template>
 
     <template v-if="data">
-      <section class="metrics-grid">
+      <section class="panel filter-panel">
+        <div class="filter-summary">
+          <div>
+            <span>Reporting scope</span>
+            <strong>{{ planFilter || channelFilter ? 'Filtered' : 'Entire platform' }}</strong>
+            <small>
+              {{ rangeLabel }}
+              · {{ planFilter ? (plans.find((p) => p.code === planFilter)?.name ?? planFilter) : 'all plans' }}
+              · {{ channelFilter || 'all channels' }}
+            </small>
+          </div>
+          <span class="live-status"><i class="live-dot" /> {{ num(data.active_organizations) }} workspace(s) active in this window</span>
+        </div>
+        <div class="filter-controls">
+          <label class="filter-select">
+            <span>Plan</span>
+            <select v-model="planFilter" aria-label="Filter by plan">
+              <option value="">All plans</option>
+              <option v-for="p in plans" :key="p.code" :value="p.code">{{ p.name }}</option>
+            </select>
+          </label>
+          <label class="filter-select">
+            <span>Channel</span>
+            <select v-model="channelFilter" aria-label="Filter by channel">
+              <option value="">All channels</option>
+              <option v-for="c in knownChannels" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </label>
+          <button v-if="hasFilters" class="clear-filter-button" @click="clearFilters">Clear filters</button>
+        </div>
+      </section>
+
+      <section class="metrics-grid five">
+        <PfMetric
+          label="Active workspaces"
+          :value="num(data.active_organizations)"
+          delta="had a conversation"
+          icon="org"
+        />
         <PfMetric
           label="Conversations"
           :value="compact(data.conversations.total)"
@@ -156,6 +235,11 @@ const outcomeSlices = computed(() => {
           <div v-else class="empty-state">
             <strong>Nothing to plot</strong>
             <span>No conversations were started in this range.</span>
+          </div>
+          <div v-if="volumeStats" class="chart-footer">
+            <span><strong>{{ num(volumeStats.total) }}</strong> total</span>
+            <span><strong>{{ num(volumeStats.average) }}</strong> average per bar</span>
+            <span><strong>{{ num(volumeStats.peak) }}</strong> peak</span>
           </div>
         </article>
 
@@ -243,6 +327,44 @@ const outcomeSlices = computed(() => {
         </article>
       </section>
 
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Plan utilization</h2>
+            <p>
+              AI replies consumed this month against each plan's ceiling, summed
+              across the workspaces on it
+            </p>
+          </div>
+          <PfPill v-if="data.plan_usage.some((r) => (r.percent ?? 0) >= 80)" tone="warning">
+            {{ data.plan_usage.filter((r) => (r.percent ?? 0) >= 80).length }} near limit
+          </PfPill>
+        </div>
+
+        <div v-if="data.plan_usage.length" class="usage-rows">
+          <div v-for="row in data.plan_usage" :key="row.plan_code" class="usage-row">
+            <span class="usage-label">
+              <strong>{{ row.plan_name }}</strong>
+              <small>
+                {{ num(row.used) }} /
+                {{ row.allowance === null ? 'unlimited' : num(row.allowance) }} replies
+                · {{ row.tenants }} workspace{{ row.tenants === 1 ? '' : 's' }}
+              </small>
+            </span>
+            <div class="usage-track" :class="(row.percent ?? 0) >= 100 ? 'danger' : (row.percent ?? 0) >= 80 ? 'warn' : ''">
+              <i :style="{ width: `${row.percent ?? 0}%` }" />
+            </div>
+            <!-- Unlimited reports no percentage rather than 0%: a plan with no
+                 ceiling is not a plan sitting unused. -->
+            <strong class="usage-pct">{{ row.percent === null ? '—' : `${row.percent}%` }}</strong>
+          </div>
+        </div>
+        <div v-else class="empty-state">
+          <strong>No plans in use</strong>
+          <span>Assign a workspace to a plan to see consumption.</span>
+        </div>
+      </section>
+
       <section v-if="Object.keys(data.conversations.by_status).length" class="panel">
         <div class="panel-heading">
           <div>
@@ -291,6 +413,66 @@ const outcomeSlices = computed(() => {
   font-family: var(--font-display);
   font-size: var(--text-lg);
   font-variant-numeric: tabular-nums;
+}
+
+.filter-panel { margin-bottom: 16px; }
+
+.filter-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--o08);
+}
+.filter-summary > div { display: flex; flex-direction: column; gap: 2px; }
+.filter-summary span:first-child { font-size: 10px; color: var(--muted2); }
+.filter-summary strong { font-family: var(--font-display); font-size: var(--text-base); }
+.filter-summary small { font-size: 11px; color: var(--muted2); }
+
+.live-status { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); }
+
+.filter-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding-top: 14px; }
+
+.metrics-grid.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1180px) { .metrics-grid.five { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px)  { .metrics-grid.five { grid-template-columns: minmax(0, 1fr); } }
+
+.chart-footer {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--o08);
+  margin-top: 14px;
+  padding-top: 12px;
+  font-size: 11px;
+  color: var(--muted2);
+}
+.chart-footer strong { color: var(--text2); font-variant-numeric: tabular-nums; }
+
+.usage-rows { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+
+.usage-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(0, 2fr) 46px;
+  gap: 14px;
+  align-items: center;
+}
+.usage-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.usage-label strong { font-size: var(--text-xs); }
+.usage-label small { font-size: 10px; color: var(--muted2); }
+
+.usage-track { height: 8px; background: var(--o08); border-radius: var(--radius-pill); overflow: hidden; }
+.usage-track > i { display: block; height: 100%; background: var(--accent-ink); border-radius: var(--radius-pill); }
+.usage-track.warn > i { background: var(--c-warn); }
+.usage-track.danger > i { background: var(--c-danger); }
+
+.usage-pct { font-size: var(--text-xs); text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 640px) {
+  .usage-row { grid-template-columns: minmax(0, 1fr) 46px; }
+  .usage-track { grid-column: 1 / -1; }
 }
 
 .status-row { display: flex; gap: 26px; flex-wrap: wrap; margin-top: 16px; }
