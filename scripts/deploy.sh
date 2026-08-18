@@ -36,6 +36,15 @@ if [ "$BUILD" = "1" ]; then
   # problem for Checkfunnel.
   echo "==> Building backend (shares 2 vCPU with Checkfunnel)"
   dc build backend
+  # knowledge_processor is a *separate image*, not another container off the backend
+  # one, so leaving it out here meant `up -d` kept recreating it from whatever was
+  # built the first time. The service that does all the crawling and embedding was
+  # therefore running code from an unknown earlier deploy, indefinitely and silently.
+  # It shares the backend's Dockerfile and context, so this is a cache hit and costs
+  # seconds — but it must be sequential: parallel builds of the same layers race on
+  # the ~200MB torch wheel, which is what corrupted it and failed the very first build.
+  echo "==> Building knowledge_processor"
+  dc build knowledge_processor
   echo "==> Building frontend"
   dc build frontend
 fi
