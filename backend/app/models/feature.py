@@ -110,7 +110,10 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
     ),
     FeatureDef(
         "custom_models", "Bring your own model", FeatureCategory.AUTOMATION,
-        "Use the customer's own AI provider and API key instead of the platform's.",
+        "Connect an AI provider with the customer's own API key. Every plan "
+        "includes this: with no shared platform model on this deployment it is "
+        "the only way to get a working agent, so withholding it would not sell "
+        "an upgrade — it would leave the workspace unable to answer anything.",
         "POST /ai/setup",
     ),
     FeatureDef(

@@ -73,3 +73,6 @@ frontend/.env.*.bak*
 # Stale loader copies — server.js serves the current build from frontend/public/webclient
 chattermate-test/chattermate.min.js
 .env.growmiq
+
+# Vitest writes a timestamped temp config next to the real one during a run
+vitest.config.ts.timestamp-*.mjs

@@ -276,6 +276,69 @@ cascade exists only in SQLAlchemy.
 
 ## Troubleshooting
 
+### A page in the app is blank after a deploy
+
+Almost always a stale app shell, not a broken build. Every deploy emits new
+content-hashed chunk filenames and deletes the old ones, so a browser still
+holding the previous `index.html` — from the service worker's precache or an
+ordinary HTTP cache — asks for chunks that no longer exist.
+
+The router now recovers from this by itself: `router.onError` in
+`frontend/src/router/index.ts` detects a failed dynamic import and reloads once,
+guarded by a `sessionStorage` flag so it can never loop. Before that existed the
+navigation simply rendered nothing.
+
+If someone still reports a blank page:
+
+```bash
+# Confirm the server is serving the current build, not that the client is stale
+curl -s https://chat.growmiq.io/ | grep -o '/assets/main-[^"]*\.js'
+```
+
+Then have them hard-reload once (Cmd/Ctrl+Shift+R), or in DevTools →
+Application → Service Workers → Unregister. A normal reload is not always enough:
+the waiting worker only takes over when the update toast is accepted.
+
+### Everything renders in the wrong font
+
+`Content-Security-Policy` in `frontend/nginx.conf` must list
+`https://fonts.googleapis.com` under `style-src` **and**
+`https://fonts.gstatic.com` under `font-src`. `default-src 'self'` does not cover
+either, so omitting them makes the browser refuse both the stylesheet and the
+font files — silently, with only a console warning. Every screen then falls back
+to Times/Arial and looks nothing like the design. This is baked into the
+frontend image, so changing it needs a rebuild (`scripts/deploy.sh`), though it
+can be hot-patched to verify:
+
+```bash
+docker cp /opt/chattermate/frontend/nginx.conf chattermate-frontend-1:/etc/nginx/conf.d/default.conf
+docker exec chattermate-frontend-1 nginx -t && docker exec chattermate-frontend-1 nginx -s reload
+curl -sI https://chat.growmiq.io/ | grep -i content-security-policy
+```
+
+### "Custom Models feature is not available in your current plan"
+
+A tenant cannot configure AI. This deployment has **no shared platform model** —
+every workspace brings its own provider key — so `custom_models` is not an
+upsell here, it is the only route to a working agent. It must be enabled on
+every plan:
+
+```bash
+docker exec chattermate-db-1 psql -U postgres -d chattermate -c \
+  "INSERT INTO plan_features (id, plan_code, feature_key, is_enabled)
+   SELECT gen_random_uuid(), code, 'custom_models', true FROM plans
+   ON CONFLICT (plan_code, feature_key) DO UPDATE SET is_enabled = true;"
+```
+
+The seed in `add_plan_features_and_metrics_001.py` places it at tier 0 for the
+same reason. Check what a plan grants with:
+
+```bash
+docker exec chattermate-db-1 psql -U postgres -d chattermate -c \
+  "SELECT plan_code, string_agg(feature_key, ', ' ORDER BY feature_key)
+   FROM plan_features WHERE is_enabled GROUP BY plan_code ORDER BY plan_code;"
+```
+
 ### 502 from the site
 
 ```bash

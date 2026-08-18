@@ -362,6 +362,58 @@ const router = createRouter({
   routes: allRoutes,
 })
 
+/**
+ * Recover from a stale app shell.
+ *
+ * Every deploy emits new content-hashed chunk filenames and deletes the old
+ * ones. A browser still holding the previous index.html — from the service
+ * worker's precache, or an ordinary HTTP cache — therefore asks for chunks the
+ * server no longer has. Vue Router surfaces that as a navigation error and
+ * renders nothing, which looks exactly like a blank page with no explanation.
+ *
+ * Reloading re-fetches index.html and picks up the current filenames. The
+ * sessionStorage flag makes it strictly one attempt: if the reload does not
+ * fix it, the real error must be allowed to surface rather than trapping the
+ * tab in a refresh loop.
+ */
+const STALE_RELOAD_KEY = 'cm.staleChunkReload'
+
+// sessionStorage is absent in SSR and can throw in a locked-down or private
+// context. Guarded because these run on every navigation, and a throw inside
+// afterEach breaks routing itself — a far worse failure than losing the
+// one-reload guard.
+const staleFlag = {
+  get(): boolean {
+    try { return sessionStorage.getItem(STALE_RELOAD_KEY) !== null } catch { return false }
+  },
+  set() {
+    try { sessionStorage.setItem(STALE_RELOAD_KEY, '1') } catch { /* best effort */ }
+  },
+  clear() {
+    try { sessionStorage.removeItem(STALE_RELOAD_KEY) } catch { /* best effort */ }
+  },
+}
+
+router.onError((error, to) => {
+  const message = String((error as Error)?.message || '')
+  const isStaleChunk =
+    /Failed to fetch dynamically imported module/i.test(message) ||
+    /Importing a module script failed/i.test(message) ||
+    /error loading dynamically imported module/i.test(message)
+
+  if (!isStaleChunk) return
+
+  if (staleFlag.get()) {
+    console.error('Chunk load still failing after a reload; not retrying.', error)
+    return
+  }
+  staleFlag.set()
+  window.location.assign(to.fullPath)
+})
+
+// A completed navigation means the shell and its chunks agree again.
+router.afterEach(() => staleFlag.clear())
+
 // Add subscription guard only if enterprise module is available
 if (hasEnterpriseModule) {
   const loadGuard = async () => {

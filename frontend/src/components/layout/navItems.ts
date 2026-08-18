@@ -119,9 +119,13 @@ export function useNavItems() {
         section: 'Platform',
         items: [
           {
+            // Labelled for what it opens, not for one tab inside it. This read
+            // "Tenants" while the console was a four-tab page; it is now a
+            // full operations console with its own sidebar, and the old name
+            // made the rest of it look missing.
             to: '/platform',
-            icon: 'org',
-            label: 'Tenants',
+            icon: 'shield',
+            label: 'Admin Console',
             show: isOperator.value,
           },
         ],

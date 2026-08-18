@@ -27,10 +27,13 @@ TIERS = {
     # Everything a tenant needs for the product to work at all. Chat, agents
     # and the widget are not listed because they are not gated — a plan that
     # could switch off chat would not be a plan, it would be a suspension.
-    0: ['knowledge_base'],
+    # custom_models is base-tier, not premium. There is no shared platform
+    # model here, so a plan without it cannot configure any AI at all and its
+    # agents can never answer — that is a broken plan, not a cheap one.
+    0: ['knowledge_base', 'custom_models'],
     1: ['analytics', 'roles_permissions', 'user_groups', 'help_center'],
     2: [
-        'workflow', 'custom_models', 'lead_capture', 'mcp_tools',
+        'workflow', 'lead_capture', 'mcp_tools',
         'ai_ticketing', 'crm_sync', 'jira',
     ],
 }
