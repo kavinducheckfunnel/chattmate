@@ -17,7 +17,7 @@ limitations under the License.
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { toast } from 'vue-sonner'
-import channelsService, { type ChannelAccount } from '@/services/channels'
+import channelsService, { type ChannelAccount, type MetaWebhookSetup } from '@/services/channels'
 import { agentService } from '@/services/agent'
 import type { Agent } from '@/types/agent'
 import MessengerPagePicker from './MessengerPagePicker.vue'
@@ -32,6 +32,36 @@ const emit = defineEmits<{
   (e: 'close'): void
   (e: 'connected', account: ChannelAccount): void
 }>()
+
+// The other half of the setup: values that flow OUT of ChatterMate and into
+// the customer's Meta app. Meta delivers to whichever callback that app has
+// configured, so a connection made without these verifies fine and then never
+// receives a message — the failure is silent and looks like a broken product.
+const webhookSetup = ref<MetaWebhookSetup | null>(null)
+const copiedField = ref<string | null>(null)
+
+const loadWebhookSetup = async () => {
+  try {
+    webhookSetup.value = await channelsService.getMetaWebhookSetup()
+  } catch {
+    // Non-fatal: the credential form still works, and the panel simply
+    // does not render rather than blocking the connect flow.
+    webhookSetup.value = null
+  }
+}
+
+const copyValue = async (field: string, value: string) => {
+  try {
+    await navigator.clipboard.writeText(value)
+  } catch {
+    // Clipboard is blocked outside a secure context and in some embedded
+    // views; the value stays selectable on screen either way.
+    toast.error('Could not copy — select the value and copy it manually')
+    return
+  }
+  copiedField.value = field
+  window.setTimeout(() => { if (copiedField.value === field) copiedField.value = null }, 1600)
+}
 
 // Where the credentials are copied from — linked so it's one click, not a
 // hostname to retype.
@@ -97,6 +127,10 @@ const {
 })
 
 onMounted(async () => {
+  // Fired together rather than in sequence: the webhook panel and the agent
+  // picker are independent, and awaiting one before the other just adds a
+  // round trip to the modal opening.
+  void loadWebhookSetup()
   try {
     agents.value = await agentService.getOrganizationAgents()
     selectedAgentId.value = String(
@@ -190,6 +224,46 @@ const saveAgent = async () => {
             class="meta-intro-link"
           >developers.facebook.com</a>{{ form.introAfter }}
         </p>
+        <!-- Copied OUT of ChatterMate and INTO the customer's Meta app.
+             Placed before the credential inputs because it is step one in
+             Meta's dashboard: the webhook has to be pointed here before the
+             app will deliver anything. -->
+        <div v-if="webhookSetup" class="meta-webhook">
+          <div class="meta-webhook-head">
+            <strong>Webhook settings for your Meta app</strong>
+            <small>
+              In your app → {{ channel === 'whatsapp' ? 'WhatsApp' : 'Messenger' }}
+              → Configuration → Webhook, paste these two values, then subscribe
+              to <code>messages</code>.
+            </small>
+          </div>
+
+          <div class="meta-copy-row">
+            <label class="meta-label" for="meta-callback">Webhook Callback URL</label>
+            <div class="meta-copy-field">
+              <input id="meta-callback" class="meta-input" :value="webhookSetup.callback_url" readonly @focus="($event.target as HTMLInputElement).select()" />
+              <button type="button" class="meta-copy-btn" @click="copyValue('callback', webhookSetup.callback_url)">
+                {{ copiedField === 'callback' ? 'Copied' : 'Copy' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="meta-copy-row">
+            <label class="meta-label" for="meta-verify">Webhook Verify Token</label>
+            <div v-if="webhookSetup.verify_token" class="meta-copy-field">
+              <input id="meta-verify" class="meta-input" :value="webhookSetup.verify_token" readonly @focus="($event.target as HTMLInputElement).select()" />
+              <button type="button" class="meta-copy-btn" @click="copyValue('verify', webhookSetup.verify_token!)">
+                {{ copiedField === 'verify' ? 'Copied' : 'Copy' }}
+              </button>
+            </div>
+            <p v-else class="meta-webhook-warning">
+              Not configured on the server. Set <code>META_WEBHOOK_VERIFY_TOKEN</code>
+              in the backend environment — until then Meta's verification
+              handshake will fail and no messages will be delivered.
+            </p>
+          </div>
+        </div>
+
         <div v-for="field in form.fields" :key="field.key" class="meta-field">
           <label class="meta-label" :for="`meta-${field.key}`">{{ field.label }}</label>
           <input
@@ -290,6 +364,71 @@ const saveAgent = async () => {
 
 .meta-intro-link:hover {
   text-decoration: none;
+}
+
+.meta-webhook {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-btn, 8px);
+  background: var(--background-soft);
+  padding: 14px;
+  margin-bottom: 18px;
+}
+
+.meta-webhook-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.meta-webhook-head strong { font-size: 13px; }
+
+.meta-webhook-head small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.meta-webhook code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  background: var(--o08, rgba(255, 255, 255, 0.08));
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.meta-copy-row + .meta-copy-row { margin-top: 10px; }
+
+.meta-copy-field { display: flex; gap: 8px; align-items: stretch; }
+
+/* Readonly, not disabled: the value must stay selectable so it can be copied
+   by hand wherever the clipboard API is unavailable. */
+.meta-copy-field .meta-input {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  cursor: text;
+}
+
+.meta-copy-btn {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-btn, 8px);
+  background: var(--background-mute, rgba(255, 255, 255, 0.08));
+  color: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.meta-copy-btn:hover { border-color: var(--primary-color); color: var(--primary-color); }
+
+.meta-webhook-warning {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--warning-color, #d97706);
 }
 
 .meta-field {

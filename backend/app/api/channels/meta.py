@@ -337,6 +337,37 @@ async def get_embedded_signup_config(
     )
 
 
+@router.get("/webhook-setup")
+async def meta_webhook_setup(
+    current_user: User = Depends(require_permissions("manage_organization")),
+    organization: Organization = Depends(get_current_organization),
+):
+    """The two values a customer must paste into their own Meta app dashboard.
+
+    Connecting WhatsApp with manual credentials means the customer owns the
+    Meta app, so Meta will call *their* configured callback — not ours — unless
+    they point it here. Without these two on screen the connect form completes,
+    the token verifies, and then no message ever arrives, with nothing in the
+    product explaining why. They were the missing half of the setup.
+
+    The verify token is platform-wide rather than per-tenant, and is only used
+    for Meta's one-time subscribe handshake; every actual delivery is
+    independently checked against the app signature in
+    app/api/webhooks/meta.py, so knowing it does not let anyone inject events.
+    Gated on manage_organization all the same — the same permission needed to
+    connect a channel at all.
+    """
+    base = settings.BACKEND_URL.rstrip("/")
+    return {
+        "callback_url": f"{base}{settings.API_V1_STR}/webhooks/meta",
+        "verify_token": settings.META_WEBHOOK_VERIFY_TOKEN or None,
+        # Says which of the two failure modes an empty token is: not set up on
+        # the server, versus set up and simply not shown.
+        "configured": bool(settings.META_WEBHOOK_VERIFY_TOKEN),
+        "fields": ["messages", "message_echoes", "messaging_postbacks"],
+    }
+
+
 @router.post("/whatsapp", response_model=ChannelAccountOut)
 async def connect_whatsapp(
     request: WhatsAppConnectRequest,

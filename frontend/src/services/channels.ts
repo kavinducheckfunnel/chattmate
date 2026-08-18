@@ -114,6 +114,14 @@ export interface ChannelAccount {
   webhook_url?: string
 }
 
+export interface MetaWebhookSetup {
+  callback_url: string
+  /** null when META_WEBHOOK_VERIFY_TOKEN is unset on the server. */
+  verify_token: string | null
+  configured: boolean
+  fields: string[]
+}
+
 const channelsService = {
   /** All connected messaging channel accounts for the organization */
   async listAccounts(): Promise<ChannelAccount[]> {
@@ -157,6 +165,16 @@ const channelsService = {
     waba_id?: string
   }): Promise<ChannelAccount> {
     const response = await api.post('/channels/meta/whatsapp', payload)
+    return response.data
+  },
+
+  /**
+   * The callback URL and verify token a customer pastes into their own Meta
+   * app. Meta calls whichever callback that app has configured, so without
+   * these the connect form succeeds and no message ever arrives.
+   */
+  async getMetaWebhookSetup(): Promise<MetaWebhookSetup> {
+    const response = await api.get('/channels/meta/webhook-setup')
     return response.data
   },
 
