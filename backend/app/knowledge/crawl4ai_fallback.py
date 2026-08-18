@@ -35,6 +35,21 @@ except ImportError:
 # This avoids conflicts with uvloop and other event loop implementations
 
 
+# Playwright raises a plain Error for a missing browser, so there is no exception type
+# to catch - the message is the only signal. Matched on the two stable fragments
+# Playwright and Patchright both emit.
+_BROWSER_MISSING_MARKERS = (
+    "executable doesn't exist",
+    "please run the following command to download new browsers",
+)
+
+
+def _is_browser_missing_error(exc: Exception) -> bool:
+    """True when a fetch failed because no browser binary is installed."""
+    message = str(exc).lower()
+    return any(marker in message for marker in _BROWSER_MISSING_MARKERS)
+
+
 class Crawl4AIFallback:
     """
     Fallback crawler using Crawl4AI with browser rendering for JavaScript-heavy websites.
@@ -51,6 +66,11 @@ class Crawl4AIFallback:
         self.timeout = timeout
         self.verify_ssl = verify_ssl
         self._is_available = CRAWL4AI_AVAILABLE
+        # Set when a fetch failed because no Chromium binary is installed, as opposed
+        # to the page genuinely having no content. Without this the two are
+        # indistinguishable upstream and a server misconfiguration gets reported to the
+        # user as "your page may be empty", sending them to debug the wrong thing.
+        self.browser_missing = False
     
     @property
     def is_available(self) -> bool:
@@ -196,7 +216,15 @@ class Crawl4AIFallback:
                     return html_content, None, screenshot_base64
                     
         except Exception as e:
-            logger.error(f"❌ Crawl4AI async fetch error: {str(e)}", exc_info=True)
+            if _is_browser_missing_error(e):
+                self.browser_missing = True
+                logger.error(
+                    "❌ No Chromium binary available - JavaScript rendering is disabled. "
+                    "The image build must run `playwright install --with-deps chromium` "
+                    "and `crawl4ai-setup`."
+                )
+            else:
+                logger.error(f"❌ Crawl4AI async fetch error: {str(e)}", exc_info=True)
             return None, None, None
     
     def fetch_with_browser(self, url: str, take_screenshot: bool = False) -> Tuple[Optional[str], Optional[BeautifulSoup], Optional[str]]:
@@ -237,6 +265,8 @@ class Crawl4AIFallback:
             return None, soup, screenshot
             
         except Exception as e:
+            if _is_browser_missing_error(e):
+                self.browser_missing = True
             logger.error(f"❌ Crawl4AI fetch error for {url}: {str(e)}", exc_info=True)
             return None, None, None
     

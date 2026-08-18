@@ -48,6 +48,7 @@ from pydantic import BaseModel
 from agno.agent import Agent as AgnoAgent
 from app.utils.agno_utils import create_model
 from app.utils.rate_limit import limit_instruction_generation
+from app.core.security import decrypt_api_key
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -741,10 +742,18 @@ async def generate_instructions(
                     detail="No AI configuration found for your organization"
                 )
             
-            model_type = ai_config.model_type
+            # AIConfig stores the key encrypted and exposes no `api_key` attribute;
+            # reading one raised AttributeError inside this handler's try block and
+            # surfaced to every caller as a generic 500 "Failed to generate
+            # instructions". Decrypt the stored column like every other consumer.
+            model_type = (
+                ai_config.model_type.value
+                if hasattr(ai_config.model_type, "value")
+                else str(ai_config.model_type)
+            )
             model_name = ai_config.model_name
-            api_key = ai_config.api_key
-            
+            api_key = decrypt_api_key(ai_config.encrypted_api_key)
+
             if not api_key:
                 raise HTTPException(
                     status_code=500,
@@ -844,7 +853,10 @@ async def generate_instructions(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generating instructions: {str(e)}")
+        # exc_info: the bare message hid an AttributeError in this handler for as long
+        # as the endpoint has existed, because every cause collapses into the same
+        # opaque 500 below. The traceback is what makes the next one diagnosable.
+        logger.error(f"Error generating instructions: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="Failed to generate instructions"

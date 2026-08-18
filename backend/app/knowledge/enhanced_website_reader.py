@@ -44,6 +44,13 @@ class BotProtectionError(Exception):
     automated browser. Signals the user should add the content manually."""
 
 
+class RendererUnavailableError(Exception):
+    """Raised when a crawl stored nothing because no browser binary was installed.
+
+    Distinct from EmptyCrawlError: this is a server-side misconfiguration, and reporting
+    it as an empty page sends the user to investigate a site that is actually fine."""
+
+
 class EmptyCrawlError(Exception):
     """Raised when a crawl stored no pages for a reason other than bot protection.
 
@@ -99,6 +106,10 @@ class EnhancedWebsiteReader(WebsiteReader):
     _successful_crawls: int = 0
     _failed_crawls: int = 0
     _challenge_blocked: int = 0  # Pages skipped because a bot-check couldn't be cleared
+    # Set when a page needed JS rendering but no browser binary was installed. This is a
+    # server misconfiguration, not a problem with the user's site, and must not be
+    # reported as "this page may be empty".
+    _renderer_unavailable: int = 0
     _current_url: str = None  # Track current URL being processed for link resolution
     
     def _normalize_url(self, url: str) -> str:
@@ -660,6 +671,8 @@ class EnhancedWebsiteReader(WebsiteReader):
                         logger.info(f"🔄 Using Crawl4AI for JavaScript rendering: {current_url}")
                         # Note: fetch_with_browser returns (content, soup, screenshot)
                         crawl4ai_content, crawl4ai_soup, _ = crawl4ai.fetch_with_browser(current_url, take_screenshot=False)
+                        if crawl4ai.browser_missing:
+                            self._renderer_unavailable += 1
 
                         if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
                             logger.info(f"✓ Crawl4AI extracted {len(crawl4ai_content)} chars (vs {len(content) if content else 0} from BeautifulSoup)")
@@ -679,6 +692,7 @@ class EnhancedWebsiteReader(WebsiteReader):
                             logger.warning(f"Crawl4AI extraction failed, keeping BeautifulSoup result")
                     else:
                         logger.warning(f"⚠️  Crawl4AI not available for JS-heavy site. Install with: pip install crawl4ai>=0.7.0")
+                        self._renderer_unavailable += 1
                         logger.warning(f"   Falling back to BeautifulSoup (may have incomplete content)")
 
                 # If the content is still a bot-challenge interstitial (the browser
@@ -720,6 +734,8 @@ class EnhancedWebsiteReader(WebsiteReader):
                             # Note: fetch_with_browser returns (content, soup, screenshot)
                             # We don't need screenshot for backend crawling, so ignore it
                             crawl4ai_content, crawl4ai_soup, _ = crawl4ai.fetch_with_browser(current_url, take_screenshot=False)
+                            if crawl4ai.browser_missing:
+                                self._renderer_unavailable += 1
                             
                             if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
                                 logger.info(f"✓ Crawl4AI successfully extracted {len(crawl4ai_content)} chars")
@@ -738,6 +754,7 @@ class EnhancedWebsiteReader(WebsiteReader):
                                 logger.error(f"Crawl4AI fallback failed for {current_url}")
                         else:
                             logger.warning(f"⚠️  Crawl4AI not available. Install with: pip install crawl4ai>=0.7.0")
+                            self._renderer_unavailable += 1
                         
                         # Final check
                         if not content or len(content) < self.min_content_length:
@@ -811,6 +828,8 @@ class EnhancedWebsiteReader(WebsiteReader):
                     # Note: fetch_with_browser returns (content, soup, screenshot)
                     # We don't need screenshot for backend crawling, so ignore it
                     crawl4ai_content, crawl4ai_soup, _ = crawl4ai.fetch_with_browser(current_url, take_screenshot=False)
+                    if crawl4ai.browser_missing:
+                        self._renderer_unavailable += 1
                     
                     if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
                         logger.info(f"✓ Crawl4AI successfully bypassed error and extracted {len(crawl4ai_content)} chars")
@@ -855,6 +874,7 @@ class EnhancedWebsiteReader(WebsiteReader):
                     logger.error(f"Crawl4AI fallback error: {str(crawl_error)}", exc_info=True)
             else:
                 logger.warning(f"⚠️  Crawl4AI not available to retry failed request. Install with: pip install crawl4ai>=0.7.0")
+                self._renderer_unavailable += 1
             
             # Final failure
             self._failed_crawls += 1
@@ -889,6 +909,7 @@ class EnhancedWebsiteReader(WebsiteReader):
         self._successful_crawls = 0
         self._failed_crawls = 0
         self._challenge_blocked = 0
+        self._renderer_unavailable = 0
 
         crawl_start_time = time.time()
         logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting parallel crawl of {url} with max_depth={self.max_depth}, max_links={self.max_links}, and max_workers={self.max_workers}")

@@ -30,6 +30,7 @@ from app.core.auth import get_current_user, require_permissions, get_unified_aut
 from app.models.schemas.agent_customization import CustomizationCreate
 from app.database import get_db
 from app.models.organization import Organization
+from app.models.ai_config import AIConfig, AIModelType
 
 # Create a test FastAPI app
 app = FastAPI()
@@ -1215,23 +1216,28 @@ def test_generate_instructions_missing_api_key(
         def __init__(self, *args, **kwargs):
             raise ImportError("No module named 'app.enterprise.repositories.subscription'")
     
-    # Create AI config mock without API key
-    mock_config = MagicMock()
-    mock_config.model_type = "OPENAI"
+    # spec=AIConfig, not a bare MagicMock: a bare mock invents every attribute asked
+    # of it, so this suite happily set `api_key` — an attribute the real model has
+    # never had — and passed while the endpoint raised AttributeError in production.
+    # With a spec, touching an attribute the model lacks fails the test instead.
+    mock_config = MagicMock(spec=AIConfig)
+    mock_config.model_type = AIModelType.OPENAI
     mock_config.model_name = "gpt-4"
-    mock_config.api_key = ""  # Mock the decrypted api_key property
+    mock_config.encrypted_api_key = "encrypted-placeholder"
     mock_config.is_active = True
-    
+
     # Add the mock module to sys.modules
     sys.modules['app.enterprise.repositories.subscription'] = MockModule
-    
-    with patch('app.repositories.ai_config.AIConfigRepository.get_active_config') as mock_get_config:
+
+    with patch('app.repositories.ai_config.AIConfigRepository.get_active_config') as mock_get_config, \
+         patch('app.api.agent.decrypt_api_key', return_value="") as mock_decrypt:
         mock_get_config.return_value = mock_config
-        
+
         response = client.post("/api/agents/generate-instructions", json=prompt_data)
         assert response.status_code == 500
         assert "API configuration missing" in response.json()["detail"]
-        
+        mock_decrypt.assert_called_once_with("encrypted-placeholder")
+
         # Clean up
         del sys.modules['app.enterprise.repositories.subscription']
 
@@ -1247,23 +1253,71 @@ def test_generate_instructions_ai_error(
     }
     
     from unittest.mock import patch, AsyncMock, MagicMock
-    
-    # Create valid AI config mock
-    mock_config = MagicMock()
-    mock_config.model_type = "OPENAI"
+
+    mock_config = MagicMock(spec=AIConfig)
+    mock_config.model_type = AIModelType.OPENAI
     mock_config.model_name = "gpt-4"
-    mock_config.api_key = "test-key"
+    mock_config.encrypted_api_key = "encrypted-test-key"
     mock_config.is_active = True
-    
+
     with patch('app.repositories.ai_config.AIConfigRepository.get_active_config') as mock_get_config, \
+         patch('app.api.agent.decrypt_api_key', return_value="test-key"), \
          patch('app.api.agent.AgnoAgent') as mock_agent:
-        
+
         mock_get_config.return_value = mock_config
         mock_agent.return_value.arun.side_effect = Exception("AI service error")
-        
+
         response = client.post("/api/agents/generate-instructions", json=prompt_data)
         assert response.status_code == 500
         assert "Failed to generate instructions" in response.json()["detail"]
+
+
+def test_generate_instructions_decrypts_stored_key(
+    client,
+    db,
+    test_user
+):
+    """The happy path must reach the model with the *decrypted* key.
+
+    Regression test: the handler read `ai_config.api_key`, which AIConfig does not
+    define. The AttributeError was swallowed by the endpoint's blanket `except
+    Exception` and returned as an opaque 500, so "Generate with AI" failed for every
+    organization on community edition. Every other consumer of AIConfig decrypts
+    `encrypted_api_key`; this asserts this one does too.
+    """
+    from unittest.mock import patch, AsyncMock, MagicMock
+
+    prompt_data = {"prompt": "customer service", "existing_instructions": []}
+
+    mock_config = MagicMock(spec=AIConfig)
+    mock_config.model_type = AIModelType.GROQ
+    mock_config.model_name = "openai/gpt-oss-120b"
+    mock_config.encrypted_api_key = "encrypted-blob"
+    mock_config.is_active = True
+
+    response_obj = MagicMock()
+    response_obj.content = "Greet the customer warmly.\nEscalate billing issues to a human."
+
+    with patch('app.repositories.ai_config.AIConfigRepository.get_active_config', return_value=mock_config), \
+         patch('app.api.agent.decrypt_api_key', return_value="gsk-real-key") as mock_decrypt, \
+         patch('app.api.agent.create_model') as mock_create_model, \
+         patch('app.api.agent.AgnoAgent') as mock_agent:
+
+        mock_agent.return_value.arun = AsyncMock(return_value=response_obj)
+
+        response = client.post("/api/agents/generate-instructions", json=prompt_data)
+
+        assert response.status_code == 200, response.json()
+        assert response.json() == [
+            "Greet the customer warmly.",
+            "Escalate billing issues to a human.",
+        ]
+
+        mock_decrypt.assert_called_once_with("encrypted-blob")
+        # The plaintext key, and the enum's string value rather than "AIModelType.GROQ".
+        kwargs = mock_create_model.call_args.kwargs
+        assert kwargs["api_key"] == "gsk-real-key"
+        assert kwargs["model_type"] == "GROQ"
 
 
 def test_generate_instructions_rate_limiting(

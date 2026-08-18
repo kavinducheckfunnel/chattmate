@@ -173,6 +173,25 @@ async def process_queue_item(queue_item_id: int):
         except Exception as e:
             logger.error(f"Error processing queue item {queue_item_id}: {str(e)}")
             try:
+                # A DB-level failure (FK violation, dropped connection) leaves the
+                # session in a failed transaction where every subsequent statement
+                # errors out too — so without this rollback the bookkeeping below could
+                # never persist the very reason it exists to record.
+                db.rollback()
+
+                # Re-read instead of reusing the in-memory instance: deleting an
+                # organization cascades its queue rows away, and writing through the
+                # stale object raised "expected to update 1 row(s); 0 were matched"
+                # instead of recording the failure. It also covers get_by_id() itself
+                # having raised, which would leave queue_item unbound.
+                queue_item = KnowledgeQueueRepository(db).get_by_id(queue_item_id)
+                if not queue_item:
+                    logger.warning(
+                        f"Queue item {queue_item_id} vanished while processing "
+                        "(its organization was most likely deleted) - nothing to mark failed"
+                    )
+                    return
+
                 queue_item.status = QueueStatus.FAILED
                 # Persist the reason so the UI can show why it failed.
                 queue_item.error = str(e)

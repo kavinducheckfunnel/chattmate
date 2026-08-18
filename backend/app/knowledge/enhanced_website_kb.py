@@ -34,6 +34,7 @@ from app.knowledge.enhanced_website_reader import (
     EnhancedWebsiteReader,
     BotProtectionError,
     EmptyCrawlError,
+    RendererUnavailableError,
 )
 
 # Initialize logger for this module
@@ -311,6 +312,16 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
         """
         if total_documents > 0:
             return
+
+        # A missing browser is our fault, not the site's, so it is reported before any
+        # guess about the page. Telling someone their site "may be empty" when the
+        # server simply cannot render JavaScript sends them to debug the wrong system.
+        if getattr(self.reader, '_renderer_unavailable', 0) > 0:
+            raise RendererUnavailableError(
+                "This page needs JavaScript to render, and the server's page renderer "
+                "is not available right now. This is a problem on our side, not with "
+                "your site — please retry shortly or contact support."
+            )
 
         # Bot protection first: it is the specific, actionable cause.
         if getattr(self.reader, '_challenge_blocked', 0) > 0:

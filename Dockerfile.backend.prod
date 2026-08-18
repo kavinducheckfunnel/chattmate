@@ -16,7 +16,17 @@ RUN apt-get update && apt-get install -y \
 ENV PIP_DEFAULT_TIMEOUT=120
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --retries 10 -r requirements.txt
-RUN crawl4ai-setup
+
+# See the matching block in ./Dockerfile for why this is more than `crawl4ai-setup`:
+# that command exits 0 even when the browser download fails, and --with-deps supplies
+# the shared libraries python:3.12-slim lacks. The launch check turns a silent,
+# permanently-broken JS crawler into a failed build.
+RUN playwright install --with-deps chromium && \
+    crawl4ai-setup && \
+    python -c "from playwright.sync_api import sync_playwright; \
+p = sync_playwright().start(); \
+b = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage']); \
+b.close(); p.stop(); print('chromium launch verified')"
 
 # Node.js + npx and uv/uvx for STDIO MCP servers (npx @elastic/mcp-server-…,
 # uvx mcp-server-…). Copied from the official images instead of apt, which

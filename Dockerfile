@@ -17,6 +17,28 @@ ENV PIP_DEFAULT_TIMEOUT=120
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --retries 10 -r requirements.txt
 
+# Headless Chromium for the JavaScript-rendering crawl fallback.
+#
+# Without a browser binary, app/knowledge/crawl4ai_fallback.py imports cleanly but can
+# never launch, so every JS-rendered site (a React/Vue SPA serves an empty shell over
+# plain HTTP) indexes zero pages and the user is told the page "may be empty, require
+# JavaScript, or be unreachable". This step existed only in Dockerfile.backend.prod,
+# which nothing builds — the image production actually runs never installed a browser.
+#
+# --with-deps pulls the shared libraries Chromium needs; python:3.12-slim ships none of
+# them. Both installers must run: crawl4ai drives patchright, which pins a different
+# browser build than the playwright package used by the screenshot path.
+#
+# The launch check is deliberate. crawl4ai-setup swallows download failures and still
+# exits 0, which is exactly how a permanently broken crawler shipped unnoticed; this
+# turns that into a failed build instead of a silent runtime regression.
+RUN playwright install --with-deps chromium && \
+    crawl4ai-setup && \
+    python -c "from playwright.sync_api import sync_playwright; \
+p = sync_playwright().start(); \
+b = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage']); \
+b.close(); p.stop(); print('chromium launch verified')"
+
 # Node.js + npx and uv/uvx for STDIO MCP servers (npx @elastic/mcp-server-…,
 # uvx mcp-server-…). Copied from the official images instead of apt, which
 # only ships an EOL Node 18 on bookworm. Kept below the pip layer so an

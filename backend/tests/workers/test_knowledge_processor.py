@@ -312,3 +312,47 @@ async def test_duplicate_knowledge_rows_sync_the_union_of_their_agents(
 
     sync.assert_called_once()
     assert sync.call_args[0][2] == sorted([agent_a, agent_b])
+
+
+@pytest.mark.asyncio
+async def test_failure_bookkeeping_rolls_back_a_poisoned_session(
+    mock_dependencies, mock_queue_item
+):
+    """A DB-level failure must be rolled back before the failure record is written.
+
+    Regression test: a FK violation (seen in production after an organization was
+    deleted) leaves the session in a failed transaction, where every later statement
+    also errors. Without a rollback first, the handler that exists to record *why* the
+    run failed was itself guaranteed to fail, so the queue item never reached FAILED
+    and the user was left with a row stuck in PROCESSING.
+    """
+    mock_dependencies['knowledge_manager'].process_knowledge.side_effect = Exception(
+        "insert or update on table \"knowledge\" violates foreign key constraint"
+    )
+
+    with pytest.raises(Exception, match="foreign key constraint"):
+        await process_queue_item(mock_queue_item.id)
+
+    mock_dependencies['db'].rollback.assert_called_once()
+    assert mock_queue_item.status == QueueStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_vanished_queue_item_is_not_marked_failed(
+    mock_dependencies, mock_queue_item
+):
+    """Deleting an organization cascades its queue rows away mid-run.
+
+    Regression test: the handler wrote through the stale in-memory object and raised
+    "UPDATE statement on table 'knowledge_queue' expected to update 1 row(s); 0 were
+    matched", burying the original error. There is no row to mark and nobody left to
+    notify, so it should log and return quietly.
+    """
+    mock_dependencies['knowledge_manager'].process_knowledge.side_effect = Exception("boom")
+    # Found on entry, gone by the time the failure is recorded.
+    mock_dependencies['queue_repo'].get_by_id.side_effect = [mock_queue_item, None]
+
+    await process_queue_item(mock_queue_item.id)
+
+    mock_dependencies['db'].add.assert_not_called()
+    mock_dependencies['fcm'].assert_not_awaited()
