@@ -31,6 +31,29 @@ export const isShopifyEmbedded = (): boolean => {
  * have the page reloaded under them. vue-sonner is imported lazily so the
  * registration path stays off the startup critical path.
  */
+/** Whether this document is the operator console. Read from the live location
+ *  rather than the router, because this runs before the router is guaranteed to
+ *  have resolved a route. */
+function isConsole(): boolean {
+  return window.location.pathname.startsWith('/platform')
+}
+
+/**
+ * Take the waiting worker and reload.
+ *
+ * The explicit window.reload is not redundant: reload() hands SKIP_WAITING to
+ * the waiting worker, but its own refresh depends on a controllerchange that
+ * does not fire reliably once the worker has already claimed this client — the
+ * new build gets precached while the open document keeps running the old CSS.
+ */
+async function applyUpdate(reload: (reloadPage?: boolean) => Promise<void>) {
+  try {
+    await reload(true)
+  } finally {
+    window.location.reload()
+  }
+}
+
 async function promptForUpdate(reload: (reloadPage?: boolean) => Promise<void>) {
   try {
     const { toast } = await import('vue-sonner')
@@ -83,6 +106,15 @@ export function setupPWA() {
   const updateSW = registerSW({
     immediate: true,
     onNeedRefresh() {
+      // The prompt exists so an agent is never reloaded mid-reply. The operator
+      // console has no reply to interrupt, and a stale console is actively
+      // misleading — it shows yesterday's plan limits and tenant list as though
+      // they were current. So there the new build is applied straight away and
+      // the prompt is kept for the tenant-facing app.
+      if (isConsole()) {
+        void applyUpdate(updateSW)
+        return
+      }
       promptForUpdate(updateSW)
     },
   })
