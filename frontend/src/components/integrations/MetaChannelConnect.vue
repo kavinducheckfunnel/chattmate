@@ -238,6 +238,21 @@ const saveAgent = async () => {
             </small>
           </div>
 
+          <!-- Shown before the values, not after: whoever reads this panel is
+               about to copy them into Meta, and the time to learn they cannot
+               work is before that, not once messages fail to arrive. -->
+          <div v-if="webhookSetup.problems.length" class="meta-webhook-blocked" role="alert">
+            <strong>These values will not work yet</strong>
+            <ul>
+              <li v-for="problem in webhookSetup.problems" :key="problem">{{ problem }}</li>
+            </ul>
+            <small>
+              This is a server configuration issue, not something you can fix in
+              your Meta app. Connecting now will verify the token and then
+              silently receive nothing.
+            </small>
+          </div>
+
           <div class="meta-copy-row">
             <label class="meta-label" for="meta-callback">Webhook Callback URL</label>
             <div class="meta-copy-field">
@@ -430,6 +445,23 @@ const saveAgent = async () => {
   line-height: 1.55;
   color: var(--warning-color, #d97706);
 }
+
+.meta-webhook-blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--error-color, #dc2626);
+  border-radius: 8px;
+  background: var(--error-bg, rgba(220, 38, 38, 0.08));
+  color: var(--error-color, #dc2626);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.meta-webhook-blocked strong { font-size: 12px; }
+.meta-webhook-blocked ul { margin: 0; padding-left: 18px; }
+.meta-webhook-blocked li { margin-bottom: 3px; }
+.meta-webhook-blocked small { color: var(--text-muted, #9ca3af); }
 
 .meta-field {
   margin-bottom: 12px;

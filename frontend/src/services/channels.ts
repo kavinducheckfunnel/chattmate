@@ -119,6 +119,13 @@ export interface MetaWebhookSetup {
   /** null when META_WEBHOOK_VERIFY_TOKEN is unset on the server. */
   verify_token: string | null
   configured: boolean
+  /**
+   * Server settings that would stop these values working, in plain words.
+   * Non-empty means the displayed values are unusable — a localhost callback,
+   * a placeholder token, a missing app secret — and must not be presented as
+   * though they were ready to paste into Meta.
+   */
+  problems: string[]
   fields: string[]
 }
 

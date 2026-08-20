@@ -17,6 +17,7 @@ limitations under the License.
 import json
 import secrets
 import time
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -337,6 +338,64 @@ async def get_embedded_signup_config(
     )
 
 
+# Values that are syntactically fine but cannot possibly work in production.
+# Meta must be able to reach the callback from the public internet, and it
+# refuses non-HTTPS URLs outright.
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+
+# Shipped in .env.example. A deployment still carrying one has never configured
+# that value, however non-empty it looks.
+_PLACEHOLDER_PREFIXES = ("your_", "any_", "changeme", "replace_me")
+
+
+def _is_placeholder(value: str) -> bool:
+    return value.lower().startswith(_PLACEHOLDER_PREFIXES)
+
+
+def _webhook_setup_problems(base: str) -> list[str]:
+    """Why these values would not work, in words the operator can act on.
+
+    Returned rather than raised: the screen is still worth showing, because
+    seeing *which* half is broken is what tells someone whether to fix a server
+    setting or go back to their Meta app.
+    """
+    problems: list[str] = []
+    parsed = urlparse(base)
+
+    if not parsed.scheme or not parsed.netloc:
+        problems.append(
+            "BACKEND_URL is not set on the server, so there is no callback URL to give Meta."
+        )
+    else:
+        host = (parsed.hostname or "").lower()
+        if host in _LOCAL_HOSTS:
+            problems.append(
+                f"BACKEND_URL points at {host}, which Meta cannot reach. It must be the "
+                "public HTTPS address of this server."
+            )
+        elif parsed.scheme != "https":
+            problems.append("BACKEND_URL must use https:// — Meta rejects plain HTTP callbacks.")
+
+    token = settings.META_WEBHOOK_VERIFY_TOKEN or ""
+    if not token:
+        problems.append("META_WEBHOOK_VERIFY_TOKEN is not set on the server.")
+    elif _is_placeholder(token):
+        problems.append(
+            "META_WEBHOOK_VERIFY_TOKEN is still the example placeholder; replace it with a "
+            "random secret."
+        )
+
+    # Without the app secret every delivery fails its signature check, so the
+    # handshake can succeed and not one message will ever arrive.
+    if not settings.META_APP_SECRET or _is_placeholder(settings.META_APP_SECRET):
+        problems.append(
+            "META_APP_SECRET is not configured, so incoming messages cannot be verified and "
+            "will all be rejected. Copy it from your Meta app under Settings → Basic."
+        )
+
+    return problems
+
+
 @router.get("/webhook-setup")
 async def meta_webhook_setup(
     current_user: User = Depends(require_permissions("manage_organization")),
@@ -358,12 +417,19 @@ async def meta_webhook_setup(
     connect a channel at all.
     """
     base = settings.BACKEND_URL.rstrip("/")
+    problems = _webhook_setup_problems(base)
     return {
         "callback_url": f"{base}{settings.API_V1_STR}/webhooks/meta",
         "verify_token": settings.META_WEBHOOK_VERIFY_TOKEN or None,
         # Says which of the two failure modes an empty token is: not set up on
         # the server, versus set up and simply not shown.
-        "configured": bool(settings.META_WEBHOOK_VERIFY_TOKEN),
+        "configured": bool(settings.META_WEBHOOK_VERIFY_TOKEN) and not problems,
+        # Each unusable value, named. Presenting a localhost callback or a
+        # placeholder token as though they were real is worse than showing
+        # nothing: the operator pastes them into Meta, the handshake fails or
+        # silently never fires, and the product gave them no reason to doubt
+        # what it displayed.
+        "problems": problems,
         "fields": ["messages", "message_echoes", "messaging_postbacks"],
     }
 
