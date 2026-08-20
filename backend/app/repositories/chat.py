@@ -166,11 +166,51 @@ class ChatRepository:
                     logger.error(f"Error recording ai_messages usage: {str(e)}")
                     self.db.rollback()
 
+            # Images are sold as their own allowance because they are answered by
+            # a different, dearer model. Counted on the customer's message rather
+            # than the reply: the attachment is what routes the exchange to the
+            # image model, and it is the event the plan actually describes
+            # ("used only when a customer attaches an image").
+            #
+            # Same posture as above — after the commit, never fatal. A metering
+            # failure must not turn a delivered message into an error.
+            if message_data.get('message_type') == 'user' and message_data.get('organization_id'):
+                try:
+                    images = self._count_image_attachments(message.id)
+                    if images:
+                        from app.services import usage as usage_service
+                        usage_service.record(
+                            self.db, message_data['organization_id'],
+                            'image_requests', amount=images,
+                        )
+                        self.db.commit()
+                except Exception as e:
+                    logger.error(f"Error recording image_requests usage: {str(e)}")
+                    self.db.rollback()
+
             return message
         except Exception as e:
             logger.error(f"Error creating message: {str(e)}")
             self.db.rollback()
             raise
+
+    def _count_image_attachments(self, message_id: int) -> int:
+        """How many images arrived on this message.
+
+        Counted from the stored rows rather than trusting a flag on the payload,
+        because the attachments are written by several different callers and a
+        missed flag would silently stop metering rather than fail loudly.
+        """
+        from app.models.file_attachment import FileAttachment
+
+        return (
+            self.db.query(FileAttachment)
+            .filter(
+                FileAttachment.chat_history_id == message_id,
+                FileAttachment.content_type.ilike("image/%"),
+            )
+            .count()
+        )
 
     def update_message_attributes(self, message_id: int, attributes: Dict[str, Any]) -> None:
         """Merge keys into a message's attributes JSON (e.g. delivery_status)."""

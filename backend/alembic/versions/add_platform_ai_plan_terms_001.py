@@ -1,7 +1,7 @@
 """Platform-owned AI credentials, the plan terms the console edits, and the
 snapshots that let an operator change a plan without re-pricing existing tenants.
 
-Revision ID: add_platform_ai_and_plan_terms_001
+Revision ID: add_platform_ai_plan_terms_001
 Revises: add_user_delete_cascades_001
 Create Date: 2026-08-20
 """
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = 'add_platform_ai_and_plan_terms_001'
+revision = 'add_platform_ai_plan_terms_001'
 down_revision = 'add_user_delete_cascades_001'
 branch_labels = None
 depends_on = None
@@ -20,12 +20,24 @@ depends_on = None
 # mirror the published pricing table; the operator can edit every one of them.
 PLAN_TERMS = {
     'free': {
-        'max_image_requests_per_month': None,
+        # 0, not NULL. NULL means unlimited everywhere else in this schema, so
+        # leaving it null would have given the free tier unlimited image analysis
+        # — the opposite of the "No image analysis" the pricing page advertises.
+        'max_image_requests_per_month': 0,
         'max_subpages_per_source': 10,
         'overage_price_cents_per_message': None,   # not offered: blocked at limit
         'data_retention_days': 30,
     },
+    # Both names are seeded because the tier between free and pro is called
+    # `base` in some deployments and `starter` in others; the UPDATE simply
+    # matches nothing for whichever is absent.
     'base': {
+        'max_image_requests_per_month': 200,
+        'max_subpages_per_source': 30,
+        'overage_price_cents_per_message': 1,
+        'data_retention_days': 60,
+    },
+    'starter': {
         'max_image_requests_per_month': 200,
         'max_subpages_per_source': 30,
         'overage_price_cents_per_message': 1,
@@ -36,6 +48,14 @@ PLAN_TERMS = {
         'max_subpages_per_source': 50,
         'overage_price_cents_per_message': 1,
         'data_retention_days': 90,
+    },
+    # The top tier sells unlimited messages, so an image ceiling is left null to
+    # match rather than inventing a number the pricing page never mentions.
+    'scale': {
+        'max_image_requests_per_month': None,
+        'max_subpages_per_source': 100,
+        'overage_price_cents_per_message': 1,
+        'data_retention_days': 365,
     },
 }
 
