@@ -1935,3 +1935,69 @@
 .pf-shell .channel-legend span i { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 .pf-shell .channel-legend strong { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
 .pf-shell .channel-legend small { color: var(--muted); font-size: 10px; }
+
+/* Analytics layout: the reference's two-column grids and the visuals inside. */
+.pf-shell .analytics-main-grid {
+  display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
+  gap: 18px; margin-bottom: 18px;
+}
+.pf-shell .analytics-secondary-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px; margin-bottom: 18px;
+}
+@media (max-width: 1150px) {
+  .pf-shell .analytics-main-grid,
+  .pf-shell .analytics-secondary-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Grouped bars: AI and human side by side per period. */
+.pf-shell .volume-chart { margin-top: 18px; }
+.pf-shell .volume-bars { display: flex; align-items: flex-end; gap: 10px; height: 240px; }
+.pf-shell .volume-group { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; }
+.pf-shell .volume-track { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 4px; }
+.pf-shell .volume-track i { display: block; width: 12px; border-radius: 4px 4px 0 0; }
+.pf-shell .volume-track i.ai { background: var(--accent-solid); }
+.pf-shell .volume-track i.human { background: #1f2937; }
+.pf-shell .volume-group > span { font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+
+/* Resolution donut + legend. */
+.pf-shell .outcome-wrap { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; margin-top: 8px; }
+.pf-shell .outcome-donut {
+  width: 170px; height: 170px; border-radius: 50%; flex: 0 0 auto;
+  display: grid; place-items: center; position: relative;
+}
+.pf-shell .outcome-donut::after {
+  content: ''; position: absolute; inset: 26px; border-radius: 50%; background: var(--surface);
+}
+.pf-shell .outcome-donut > div { position: relative; z-index: 1; text-align: center; }
+.pf-shell .outcome-donut strong { display: block; font-size: 22px; letter-spacing: -.5px; }
+.pf-shell .outcome-donut span { font-size: 10px; color: var(--muted); }
+.pf-shell .outcome-legend { display: flex; flex-direction: column; gap: 14px; flex: 1; min-width: 160px; }
+.pf-shell .outcome-legend > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.pf-shell .outcome-legend span { display: flex; align-items: center; gap: 9px; font-size: 12px; }
+.pf-shell .outcome-legend span i { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+
+/* Knowledge / cost stat boxes. */
+.pf-shell .knowledge-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 8px; }
+.pf-shell .knowledge-stats.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pf-shell .knowledge-stats > div { padding: 16px; border-radius: 12px; background: var(--o04); border: 1px solid var(--o08); }
+.pf-shell .knowledge-stats span { display: block; font-size: 10px; color: var(--muted); }
+.pf-shell .knowledge-stats strong { display: block; margin: 8px 0 6px; font-size: 22px; letter-spacing: -.5px; }
+.pf-shell .knowledge-stats small { font-size: 9.5px; color: var(--muted); line-height: 1.4; }
+@media (max-width: 720px) { .pf-shell .knowledge-stats { grid-template-columns: minmax(0, 1fr); } }
+
+/* Top organizations, numbered. */
+.pf-shell .top-org-list { display: flex; flex-direction: column; margin-top: 6px; }
+.pf-shell .top-org-row {
+  display: flex; align-items: center; gap: 14px; padding: 13px 0;
+  border-bottom: 1px solid var(--o08); text-decoration: none; color: inherit;
+}
+.pf-shell .top-org-row:last-child { border-bottom: 0; }
+.pf-shell .top-org-row:hover { background: var(--o04); }
+.pf-shell .top-org-row em { font-style: normal; width: 16px; font-size: 11px; color: var(--muted); }
+.pf-shell .top-org-row .grow { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.pf-shell .top-org-row .grow strong { font-size: 12px; }
+.pf-shell .top-org-row .grow small { font-size: 10px; color: var(--muted); }
+.pf-shell .top-org-count { text-align: right; }
+.pf-shell .top-org-count strong { display: block; font-size: 13px; }
+.pf-shell .top-org-count small { font-size: 9.5px; color: var(--muted); }
