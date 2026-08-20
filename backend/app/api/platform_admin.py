@@ -202,6 +202,18 @@ async def list_tenants(
         ).all():
             flow.setdefault(org_id, {})[metric] = value
 
+    # Two lookups built once, not per row: this list shows dozens of workspaces
+    # and a query inside the comprehension would issue one statement each.
+    owner_email: dict = {}
+    for org_id, email in db.execute(
+        select(User.organization_id, User.email)
+        .where(User.organization_id.in_([o.id for o in orgs]))
+        .order_by(User.organization_id, User.created_at.asc().nullslast())
+    ).all():
+        owner_email.setdefault(org_id, email)
+
+    message_limit = {p.code: p.max_ai_messages_per_month for p in db.query(Plan).all()}
+
     return {
         "total": total,
         "limit": limit,
@@ -219,6 +231,13 @@ async def list_tenants(
                 "agents": agents.get(o.id, 0),
                 "conversations": flow.get(o.id, {}).get("conversations", 0),
                 "ai_messages": flow.get(o.id, {}).get("ai_messages", 0),
+                # Who to contact about this workspace. The earliest member is the
+                # one who created it, the closest thing to an owner this schema
+                # records.
+                "owner_email": owner_email.get(o.id),
+                # This workspace's own ceiling, so the list can read
+                # "used / allowed" rather than a bare count. None is unlimited.
+                "message_limit": message_limit.get(o.plan_code),
             }
             for o in orgs
         ],

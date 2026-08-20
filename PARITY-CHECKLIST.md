@@ -20,26 +20,26 @@ guessed. Line ranges are the exact component boundaries.
 
 ---
 
-## 1. Overview — `Overview` (lines 103–162)
+## 1. Overview — `Overview` (lines 103–162) — **DONE**
 
-Sections, in order:
+- [x] 4 × `MetricCard` — Organizations · Active users · Monthly revenue · Messages used
+- [x] **Revenue overview** — `Last 6 months⌄`
+- [x] **Plan distribution** — donut + legend
+- [x] **Recent organizations** — `View all →`, row click through
+- [x] **Platform usage** — two rings, backed by real allowance data
+- [x] `↗ Export report` writes real CSV
+- [x] Verified in browser: 16/16 text checks, 0 console errors
 
-- [ ] 4 × `MetricCard` — label, value, delta, icon, tone
-- [ ] **Revenue overview** panel — with `Last 6 months⌄` selector
-- [ ] **Plan distribution** panel — donut + legend
-- [ ] **Recent organizations** panel — `View all →`, `•••` row menu
-- [ ] **Platform usage** panel — `UsageRing` ×N
+## 2. Organizations — `Organizations` (lines 163–214) — **DONE**
 
-Controls: `Last 6 months⌄`, `•••`, `View all →`
-
-## 2. Organizations — `Organizations` (lines 163–214)
-
-- [ ] Table columns: Organization · Email · Plan · Status · Messages · Joined
-- [ ] `＋ Add organization` → editor drawer (4 inputs, 4 selects)
-- [ ] `↗ View details` per row → organization detail
-- [ ] Drawer `×` and `Cancel` both close
-- [ ] Search + plan/status filters actually filter
-- [ ] Sorting, pagination, "Showing X–Y of Z"
+- [x] Columns exactly: Organization · Email · Plan · Status · Messages · Joined
+- [x] Email as a `mailto:` link, click-through suppressed on the row
+- [x] Messages reads "used / allowed"; count alone on an unlimited plan
+- [x] `＋ Add organization` moved into the toolbar, where the reference has it
+- [x] Row menu: `↗ View details` / `⌫ Remove organization`
+- [x] Search + plan/status filters, `Clear filters`
+- [x] "Showing N of M organizations · filters applied"
+- [x] Verified in browser: filter 6 → 4 rows, 6 mailto links, 0 console errors
 
 ## 3. Organization detail — `OrganizationDetail` (lines 215–323)
 

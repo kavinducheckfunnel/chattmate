@@ -108,6 +108,15 @@ const clearFilters = () => {
   page.value = 1
 }
 
+/** "used / allowed", as the reference reads it.
+ *
+ * A workspace on an unlimited plan has no denominator, so it shows the count on
+ * its own — "3,842 / ∞" would imply a ceiling that does not exist. */
+const messagesCell = (t: TenantRow) =>
+  t.message_limit === null || t.message_limit === undefined
+    ? num(t.ai_messages)
+    : `${num(t.ai_messages)} / ${num(t.message_limit)}`
+
 const planName = (code: string | null) =>
   plans.value.find((p) => p.code === code)?.name || code || 'No plan'
 
@@ -218,15 +227,11 @@ const confirmDelete = async () => {
     :loading="loading"
     :error="error"
   >
-    <template #actions>
-      <button class="primary-button" :disabled="busy" @click="openCreate">＋ Add organization</button>
-    </template>
-
     <section class="panel table-panel" @click="openMenu = null">
       <div class="table-toolbar">
         <label class="search-box">
           <span>⌕</span>
-          <input v-model="search" placeholder="Search name or domain…" />
+          <input v-model="search" placeholder="Search organizations…" />
         </label>
         <div class="toolbar-actions">
           <label class="filter-select">
@@ -248,6 +253,9 @@ const confirmDelete = async () => {
           <button v-if="hasFilters" class="clear-filter-button" @click="clearFilters">
             Clear filters
           </button>
+          <button class="primary-button" :disabled="busy" @click="openCreate">
+            ＋ Add organization
+          </button>
         </div>
       </div>
 
@@ -256,12 +264,10 @@ const confirmDelete = async () => {
           <thead>
             <tr>
               <th>Organization</th>
+              <th>Email</th>
               <th>Plan</th>
               <th>Status</th>
-              <th>Team</th>
-              <th>Agents</th>
-              <th>Conversations</th>
-              <th>AI replies</th>
+              <th>Messages</th>
               <th>Joined</th>
               <th />
             </tr>
@@ -277,16 +283,25 @@ const confirmDelete = async () => {
                   </span>
                 </div>
               </td>
+              <td>
+                <a
+                  v-if="t.owner_email"
+                  class="organization-email"
+                  :href="`mailto:${t.owner_email}`"
+                  @click.stop
+                >{{ t.owner_email }}</a>
+                <span v-else class="muted-cell">—</span>
+              </td>
               <td><strong class="plan-cell">{{ planName(t.plan_code) }}</strong></td>
               <td>
                 <PfPill :tone="t.is_active ? 'success' : 'danger'">
                   {{ t.is_active ? 'Active' : 'Suspended' }}
                 </PfPill>
               </td>
-              <td class="num">{{ num(t.seats) }}</td>
-              <td class="num">{{ num(t.agents) }}</td>
-              <td class="num">{{ num(t.conversations) }}</td>
-              <td class="num">{{ num(t.ai_messages) }}</td>
+              <!-- used / allowance, as the reference reads it. An unlimited plan
+                   has no denominator, so it shows the count alone rather than a
+                   fraction over nothing. -->
+              <td class="num">{{ messagesCell(t) }}</td>
               <td>{{ date(t.created_at) }}</td>
               <td class="row-actions-cell">
                 <button
@@ -295,11 +310,11 @@ const confirmDelete = async () => {
                   @click.stop="openMenu = openMenu === t.id ? null : t.id"
                 >•••</button>
                 <div v-if="openMenu === t.id" class="row-action-menu" @click.stop>
-                  <button @click="open(t)">↗ Open workspace details</button>
+                  <button @click="open(t)">↗ View details</button>
                   <button @click="toggleActive(t)">
                     {{ t.is_active ? '⊘ Suspend workspace' : '✓ Reactivate workspace' }}
                   </button>
-                  <button class="danger" @click="askDelete(t)">⌫ Delete workspace</button>
+                  <button class="danger" @click="askDelete(t)">⌫ Remove organization</button>
                 </div>
               </td>
             </tr>
@@ -470,6 +485,10 @@ const confirmDelete = async () => {
 </template>
 
 <style scoped>
+/* A workspace with no members yet has no address to show; an em dash says that
+   without pretending the column is empty by accident. */
+.muted-cell { color: var(--muted); }
+
 .plan-cell { text-transform: capitalize; }
 .field span strong { color: var(--text); font-family: var(--font-mono); font-size: 11px; }
 </style>

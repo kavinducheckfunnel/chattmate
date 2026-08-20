@@ -43,6 +43,11 @@ export interface TenantRow {
   agents: number
   conversations: number
   ai_messages: number
+  /** Earliest member's address — the closest thing to an owner the
+   *  schema records. Null for a workspace with no members yet. */
+  owner_email: string | null
+  /** This workspace's monthly message ceiling; null means unlimited. */
+  message_limit: number | null
 }
 
 export interface TenantList {
