@@ -1854,9 +1854,13 @@
    =========================================================================== */
 
 .pf-shell .billing-primary-card {
-  background: var(--bg-deep);
+  /* Pinned, not tokenised. --bg-deep flips with the theme (#0A0B0E dark,
+     #F4F6FA light), so using it made the card light-on-light in light mode
+     after it had been fixed for dark. This panel is inverted by design — it is
+     dark in both themes — so its ground must not follow the theme either. */
+  background: #171a22;
   color: #f2f5f8;
-  border: 1px solid var(--o12);
+  border: 1px solid rgba(255, 255, 255, 0.10);
 }
 .pf-shell .billing-primary-card > span,
 .pf-shell .billing-primary-card > div span { color: rgba(242, 245, 248, 0.62); }
@@ -1864,7 +1868,7 @@
 .pf-shell .billing-primary-card > div b { color: #f2f5f8; }
 .pf-shell .billing-primary-card > small { color: var(--accent-solid); }
 
-.pf-shell .plan-badge.pro { background: var(--bg-deep); color: #f2f5f8; }
+.pf-shell .plan-badge.pro { background: #171a22; color: #f2f5f8; }
 
 /* The totals row is the one an operator reads first; it had inherited a muted
    colour that made it fainter than the rows it sums. */
@@ -1877,3 +1881,33 @@
 .pf-shell .api-cost-mark { background: var(--c-info); }
 .pf-shell .chart-keys .revenue-key { background: var(--accent-solid); }
 .pf-shell .chart-keys .api-key { background: var(--c-info); }
+
+/* ── Billing spacing ─────────────────────────────────────────────────────────
+   The three-card row and the grids under it inherited a tight gap and read as
+   one block rather than as separate cards. Given room, and the quick-stats rows
+   given a rule between them so the eye can find each figure. */
+.pf-shell .billing-finance-overview,
+.pf-shell .billing-chart-grid,
+.pf-shell .billing-business-grid,
+.pf-shell .billing-usage-overview { gap: 18px; margin-bottom: 18px; }
+
+.pf-shell .billing-period-bar { margin-bottom: 18px; padding: 18px 22px; }
+
+.pf-shell .billing-quick-stats { padding: 6px 20px; }
+.pf-shell .billing-quick-stats > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--o08);
+}
+.pf-shell .billing-quick-stats > div:last-child { border-bottom: 0; }
+
+.pf-shell .api-reserve-card { padding: 20px 22px; }
+.pf-shell .api-reserve-values { margin-top: 12px; }
+.pf-shell .api-reserve-card p { margin-top: 14px; line-height: 1.55; }
+
+.pf-shell .billing-primary-card > div { gap: 14px; padding-top: 20px; }
+.pf-shell .sales-health-list > div,
+.pf-shell .profit-breakdown > div { padding: 12px 0; }
