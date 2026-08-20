@@ -43,17 +43,22 @@ import { num, money, date, dateTime, ago, initials, ofLimit } from '@/utils/plat
 const props = defineProps<{ id: string }>()
 
 type Tab = 'overview' | 'members' | 'conversations' | 'features'
-  | 'usage' | 'knowledge' | 'integrations' | 'audit'
+  | 'usage' | 'billing' | 'knowledge' | 'integrations' | 'audit'
 
+// The reference's seven, in its order and with its labels. Knowledge and
+// Integrations follow: both are backed by real endpoints here and the reference
+// — which is a mock with no such data — simply has no equivalent, so dropping
+// them to match a tab count would delete working features.
 const TABS: { key: Tab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'members', label: 'Members' },
-  { key: 'conversations', label: 'Conversations' },
+  { key: 'conversations', label: 'Chats' },
   { key: 'features', label: 'Features' },
   { key: 'usage', label: 'Usage' },
+  { key: 'billing', label: 'Billing' },
+  { key: 'audit', label: 'Audit' },
   { key: 'knowledge', label: 'Knowledge' },
   { key: 'integrations', label: 'Integrations' },
-  { key: 'audit', label: 'Audit' },
 ]
 
 const tab = ref<Tab>('overview')
@@ -146,6 +151,40 @@ const changePlan = async (code: string) => {
   } finally {
     busy.value = false
   }
+}
+
+/** Open this workspace as its owner would see it.
+ *
+ * Deliberately a new tab rather than a redirect: the operator keeps the console
+ * they are working in, and closing the tab is the whole exit path — there is no
+ * "leave support mode" state to get stuck in.
+ */
+const planPriceLabel = computed(() => {
+  if (!plan.value) return 'No plan assigned'
+  return plan.value.price_cents
+    ? `$${(plan.value.price_cents / 100).toFixed(0)} / month`
+    : 'Free forever'
+})
+
+/** What this workspace would be billed for the current period.
+ *
+ * Derived from the plan catalogue rather than from an invoice, because no
+ * invoice exists — so it is labelled as the plan price, not as money owed. */
+const nextInvoiceLabel = computed(() => {
+  if (!plan.value?.price_cents) return '$0.00'
+  return `$${(plan.value.price_cents / 100).toFixed(2)}`
+})
+
+const renewalLabel = computed(() => {
+  // Billing periods here are calendar months, so the next one starts on the 1st.
+  const now = new Date()
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+  return `Period starts ${next.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
+})
+
+const enterSupportMode = () => {
+  if (!tenant.value) return
+  window.open(`https://${tenant.value.domain}`, '_blank', 'noopener')
 }
 
 const toggleActive = async () => {
@@ -344,6 +383,7 @@ const openSession = ref<string | null>(null)
           <button class="select-button" :disabled="busy" @click="toggleActive">
             {{ tenant.is_active ? 'Suspend' : 'Reactivate' }}
           </button>
+          <button class="primary-button" @click="enterSupportMode">Enter support mode</button>
         </div>
       </section>
 
@@ -710,6 +750,45 @@ const openSession = ref<string | null>(null)
           </div>
 
           <!-- Audit --------------------------------------------------------->
+          <div v-else-if="tab === 'billing'">
+            <div class="panel-heading">
+              <div>
+                <h2>Subscription &amp; billing</h2>
+                <p>Plan, add-on messages, payment method and invoice history for this organization.</p>
+              </div>
+              <button class="select-button" @click="tab = 'usage'">Manage subscription</button>
+            </div>
+
+            <section class="metrics-grid three">
+              <article class="panel soft">
+                <span class="field-label">Current plan</span>
+                <strong class="billing-figure">{{ plan?.name ?? 'No plan' }}</strong>
+                <small>{{ planPriceLabel }}</small>
+              </article>
+              <article class="panel soft">
+                <span class="field-label">Next invoice</span>
+                <strong class="billing-figure">{{ nextInvoiceLabel }}</strong>
+                <small>{{ renewalLabel }}</small>
+              </article>
+              <article class="panel soft">
+                <span class="field-label">Payment method</span>
+                <strong class="billing-figure">Not connected</strong>
+                <!-- Said plainly. A card number here would be invented: no payment
+                     processor is wired to this deployment. -->
+                <small>No payment processor is connected yet</small>
+              </article>
+            </section>
+
+            <div class="empty-state">
+              <strong>No invoices yet</strong>
+              <span>
+                Invoices appear once a payment processor is connected. Until then
+                the figures above come from the plan catalogue, not from a bill
+                anyone has been sent.
+              </span>
+            </div>
+          </div>
+
           <div v-else-if="tab === 'audit'">
             <div class="tab-content-head">
               <div>
@@ -791,24 +870,24 @@ const openSession = ref<string | null>(null)
           <section class="panel">
             <div class="panel-heading">
               <div>
-                <h3>Quick actions</h3>
-                <p>Common support tasks</p>
+                <h3>Quick admin actions</h3>
+                <p>Manage this organization</p>
               </div>
             </div>
             <div class="quick-actions">
-              <button @click="tab = 'conversations'">
-                <span>💬</span><strong>Read a conversation</strong><small>Audited per transcript</small>
+              <button @click="tab = 'billing'">
+                <span>◆</span><strong>Manage subscription</strong><small>Plan and add-ons</small>
               </button>
               <button @click="tab = 'members'">
-                <span>👤</span><strong>Fix a login</strong><small>Reset a password or reactivate</small>
+                <span>♙</span><strong>Manage members</strong><small>Roles and access</small>
               </button>
-              <button @click="tab = 'features'">
-                <span>◇</span><strong>Grant a feature</strong><small>Override this workspace's plan</small>
+              <button @click="enterSupportMode">
+                <span>↗</span><strong>Support mode</strong><small>Open client workspace</small>
               </button>
               <button class="danger" :disabled="busy" @click="toggleActive">
                 <span>{{ tenant.is_active ? '⊘' : '✓' }}</span>
-                <strong>{{ tenant.is_active ? 'Suspend workspace' : 'Reactivate workspace' }}</strong>
-                <small>{{ tenant.is_active ? 'Blocks all access immediately' : 'Restores access' }}</small>
+                <strong>{{ tenant.is_active ? 'Suspend account' : 'Activate account' }}</strong>
+                <small>{{ tenant.is_active ? 'Block workspace access' : 'Restore workspace access' }}</small>
               </button>
             </div>
           </section>
@@ -902,6 +981,13 @@ const openSession = ref<string | null>(null)
 </template>
 
 <style scoped>
+.billing-figure { display: block; margin: 6px 0 4px; font-size: 22px; font-weight: 700; }
+.panel.soft { padding: 16px; }
+.metrics-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) {
+  .metrics-grid.three { grid-template-columns: minmax(0, 1fr); }
+}
+
 .section-divider {
   height: 1px;
   background: var(--o08);

@@ -41,19 +41,16 @@ guessed. Line ranges are the exact component boundaries.
 - [x] "Showing N of M organizations · filters applied"
 - [x] Verified in browser: filter 6 → 4 rows, 6 mailto links, 0 console errors
 
-## 3. Organization detail — `OrganizationDetail` (lines 215–323)
+## 3. Organization detail — `OrganizationDetail` (215–323) — **DONE**
 
-Largest page. Tables for members, conversations, and feature access.
-
-- [ ] Member columns: Member · Role · Status · Last active
-- [ ] Conversation columns: Conversation · Customer · Channel · Topic · Messages · Outcome · Rating
-- [ ] Feature columns: Category · Feature · Effective access
-- [ ] `Enter support mode`
-- [ ] `＋ Invite member`
-- [ ] `⇩ Download XLSX`, `Export filtered data →`, `Export CSV`, `Export log`, `Download`
-- [ ] `✎ Modify features` → `Reset to plan` / `Cancel` / `Save access`
-- [ ] Subscription modal — `×` and `Cancel`
-- [ ] `•••` row menus, `View all →`
+- [x] Tabs exactly: Overview · Members · Chats · Features · Usage · Billing · Audit
+      (Knowledge and Integrations appended — real features the reference lacks)
+- [x] Header: `Suspend` + `Enter support mode`
+- [x] Aside: **Account health** and **Quick admin actions** with the reference's
+      four tiles — Manage subscription · Manage members · Support mode ·
+      Suspend account
+- [x] Billing tab added (plan, next invoice, payment method)
+- [x] Verified in browser: all 7 tabs render, 0 console errors
 
 ## 4. Plans & Limits — `Plans` (lines 328–388)
 
