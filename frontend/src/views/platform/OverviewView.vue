@@ -22,6 +22,7 @@ import PfMetric from '@/components/platform/ui/PfMetric.vue'
 import PfPill from '@/components/platform/ui/PfPill.vue'
 import PfDonut from '@/components/platform/ui/PfDonut.vue'
 import PfBars from '@/components/platform/ui/PfBars.vue'
+import PfRing from '@/components/platform/ui/PfRing.vue'
 import { getOverview, type Overview } from '@/services/platform'
 import { extractApiError } from '@/utils/apiError'
 import { compact, money, money0, num, date, initials } from '@/utils/platformFormat'
@@ -45,6 +46,55 @@ const load = async () => {
 onMounted(load)
 
 const mrr = computed(() => (data.value ? data.value.revenue.mrr_cents / 100 : 0))
+
+// Share of the allowance actually sold, or null where a plan has no ceiling —
+// a percentage of unlimited is not a number, and drawing 0% would read as
+// "nothing used" when the truth is "nothing to measure against".
+const messagesPercent = computed(() => data.value?.allowances?.ai_messages.percent ?? null)
+const imagesPercent = computed(() => data.value?.allowances?.image_requests.percent ?? null)
+
+const uncappedNote = computed(() => {
+  const n = data.value?.allowances?.ai_messages.uncapped_tenants ?? 0
+  if (!n) return ''
+  return `${n} workspace${n === 1 ? '' : 's'} on an unlimited plan ${n === 1 ? 'is' : 'are'} not counted here.`
+})
+
+const messagesDelta = computed(() => {
+  const percent = messagesPercent.value
+  if (percent === null) return `${compact(data.value?.usage.conversations ?? 0)} conversations`
+  return `${percent}% of limit`
+})
+
+/** Downloads what is on screen as CSV, generated in the browser from the data
+ *  already loaded — no endpoint, and nothing that can disagree with the page. */
+const exportReport = () => {
+  const d = data.value
+  if (!d) return
+  const rows: (string | number)[][] = [
+    ['Metric', 'Value'],
+    ['Period', d.period],
+    ['Organizations', d.organizations.total],
+    ['New this month', d.organizations.new_this_month],
+    ['Active users', d.users],
+    ['AI agents', d.agents],
+    ['Monthly revenue', money(mrr.value)],
+    ['Paying workspaces', d.revenue.paying_tenants],
+    ['Conversations', d.usage.conversations],
+    ['Messages used', d.usage.ai_messages],
+    ['Messages allowance', d.allowances?.ai_messages.limit ?? 'Unlimited'],
+    ['Image requests', d.allowances?.image_requests.used ?? 0],
+    ['Image allowance', d.allowances?.image_requests.limit ?? 'Unlimited'],
+  ]
+  // Quote every field: organization names contain commas often enough that an
+  // unquoted export silently shifts columns.
+  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `platform-overview-${d.period}.csv`
+  link.click()
+  URL.revokeObjectURL(url)
+}
 
 const greeting = computed(() => {
   const h = new Date().getHours()
@@ -102,7 +152,7 @@ const openTenant = (id: string) => router.push(`/platform/organizations/${id}`)
     :error="error"
   >
     <template #actions>
-      <button class="select-button" @click="load">Refresh</button>
+      <button class="select-button" @click="exportReport">↗ Export report</button>
       <RouterLink to="/platform/organizations" class="primary-button">＋ Add organization</RouterLink>
     </template>
 
@@ -116,14 +166,14 @@ const openTenant = (id: string) => router.push(`/platform/organizations/${id}`)
           icon="org"
         />
         <PfMetric
-          label="Users"
+          label="Active users"
           :value="num(data.users)"
           :delta="`${num(data.agents)} AI agents`"
           icon="people"
           tone="teal"
         />
         <PfMetric
-          label="Recurring revenue"
+          label="Monthly revenue"
           :value="money0(mrr)"
           :delta="`${data.revenue.paying_tenants} paying`"
           :delta-tone="data.revenue.paying_tenants ? 'success' : 'neutral'"
@@ -131,9 +181,9 @@ const openTenant = (id: string) => router.push(`/platform/organizations/${id}`)
           tone="purple"
         />
         <PfMetric
-          label="AI replies this month"
+          label="Messages used"
           :value="compact(data.usage.ai_messages)"
-          :delta="`${compact(data.usage.conversations)} conversations`"
+          :delta="messagesDelta"
           icon="message"
           tone="coral"
         />
@@ -151,10 +201,10 @@ const openTenant = (id: string) => router.push(`/platform/organizations/${id}`)
         <article class="panel">
           <div class="panel-heading">
             <div>
-              <h2>Recurring revenue</h2>
-              <p>Plan price × active workspaces, recorded at the end of each month</p>
+              <h2>Revenue overview</h2>
+              <p>Recurring revenue over the last 6 months</p>
             </div>
-            <RouterLink to="/platform/billing" class="text-button">Billing →</RouterLink>
+            <RouterLink to="/platform/billing" class="select-button">Last 6 months⌄</RouterLink>
           </div>
 
           <div class="revenue-total">
@@ -179,8 +229,8 @@ const openTenant = (id: string) => router.push(`/platform/organizations/${id}`)
         <article class="panel">
           <div class="panel-heading">
             <div>
-              <h2>Plan mix</h2>
-              <p>Active workspaces by plan</p>
+              <h2>Plan distribution</h2>
+              <p>Organizations by active plan</p>
             </div>
           </div>
           <PfDonut
@@ -201,7 +251,7 @@ const openTenant = (id: string) => router.push(`/platform/organizations/${id}`)
           <div class="panel-heading">
             <div>
               <h2>Recent organizations</h2>
-              <p>Newest customer workspaces</p>
+              <p>Latest client workspaces added to the platform</p>
             </div>
             <RouterLink to="/platform/organizations" class="text-button">View all →</RouterLink>
           </div>
@@ -231,21 +281,35 @@ const openTenant = (id: string) => router.push(`/platform/organizations/${id}`)
           </div>
         </article>
 
-        <article class="panel">
+        <article class="panel usage-panel">
           <div class="panel-heading">
             <div>
-              <h2>AI replies</h2>
-              <p>Metered volume across all workspaces</p>
+              <h2>Platform usage</h2>
+              <p>Current month consumption</p>
             </div>
           </div>
-          <PfBars v-if="usageBars.some((b) => b.value)" :bars="usageBars" :format="compact" />
-          <div v-else class="empty-state">
-            <strong>No AI replies recorded</strong>
-            <span>Volume appears here once agents start answering.</span>
+          <div class="ring-grid two-rings">
+            <!-- A ring needs a ceiling to fill against. On an unlimited plan
+                 there is none, so the count is shown instead of a fabricated
+                 percentage. -->
+            <PfRing
+              :value="messagesPercent ?? 0"
+              :label="messagesPercent === null ? 'Messages · no limit' : 'Messages'"
+              color="var(--accent-solid)"
+            />
+            <PfRing
+              :value="imagesPercent ?? 0"
+              :label="imagesPercent === null ? 'Images · no limit' : 'Images'"
+              color="#7b71f5"
+            />
+          </div>
+          <!-- Named rather than folded into the percentage: a ring drawn over
+               a partial set of tenants should say so. -->
+          <div v-if="uncappedNote" class="chart-note">{{ uncappedNote }}
           </div>
           <div class="usage-note">
             <span class="live-dot" />
-            <span>Metering is live — every AI reply is counted as it is sent</span>
+            <span>All usage services are reporting normally</span>
           </div>
         </article>
       </section>

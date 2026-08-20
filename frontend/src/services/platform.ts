@@ -284,12 +284,28 @@ export interface UsagePoint {
   ai_messages: number
 }
 
+/** Consumption against a ceiling. `uncapped_tenants` counts workspaces on an
+ *  unlimited plan, which are excluded from both sides of the ratio — including
+ *  them would make the percentage describe a set the denominator does not. */
+export interface AllowanceUsage {
+  used: number
+  limit: number | null
+  percent: number | null
+  uncapped_tenants: number
+}
+
 export interface Overview {
   period: string
   organizations: { total: number; active: number; suspended: number; new_this_month: number }
   users: number
   agents: number
   usage: { conversations: number; ai_messages: number }
+  /** Consumption against what was actually sold. `limit` and `percent` are
+   *  null where a plan has no ceiling — unlimited is not a percentage. */
+  allowances?: {
+    ai_messages: AllowanceUsage
+    image_requests: AllowanceUsage
+  }
   revenue: Revenue
   revenue_history: RevenuePoint[]
   usage_history: UsagePoint[]

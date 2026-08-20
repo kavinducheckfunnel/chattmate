@@ -98,6 +98,60 @@ async def overview(
     ).all()
     usage = {metric: int(value or 0) for metric, value in usage_rows}
 
+    per_org_usage = {
+        (org_id, metric): int(value or 0)
+        for org_id, metric, value in db.execute(
+            select(UsageCounter.organization_id, UsageCounter.metric, UsageCounter.value)
+            .where(UsageCounter.period == period)
+        ).all()
+    }
+
+    # Allowance across every tenant, so consumption can be shown as a share of
+    # what was actually sold rather than as a bare count. Summed per tenant from
+    # their own plan: a platform total taken from one plan's ceiling would be
+    # wrong the moment two tenants are on different tiers.
+    #
+    # A tenant on an unlimited plan contributes nothing to the denominator and
+    # sets `unlimited`, because a percentage of no ceiling is not a number.
+    METRIC_COLUMNS = {
+        "ai_messages": "max_ai_messages_per_month",
+        "image_requests": "max_image_requests_per_month",
+    }
+    allowances = {metric: 0 for metric in METRIC_COLUMNS}
+    capped_usage = {metric: 0 for metric in METRIC_COLUMNS}
+    uncapped_tenants = {metric: 0 for metric in METRIC_COLUMNS}
+
+    plan_by_code = {p.code: p for p in db.query(Plan).all()}
+    plan_by_org = dict(db.execute(select(Organization.id, Organization.plan_code)).all())
+
+    # Per organization, not platform-wide. A tenant on an unlimited plan has no
+    # ceiling to measure against, and letting one of them blank the whole figure
+    # — which is what a shared `unlimited` flag did — hides how the other tenants
+    # are tracking. They are counted out of both sides of the ratio instead, and
+    # reported separately so the number is not quietly partial.
+    for org_id, plan_code in plan_by_org.items():
+        plan = plan_by_code.get(plan_code)
+        if plan is None:
+            continue
+        for metric, column in METRIC_COLUMNS.items():
+            ceiling = getattr(plan, column)
+            used = per_org_usage.get((org_id, metric), 0)
+            if ceiling is None:
+                uncapped_tenants[metric] += 1
+            else:
+                allowances[metric] += ceiling
+                capped_usage[metric] += used
+
+    def _share(metric: str):
+        """Percent of allowance consumed across tenants that have one.
+
+        None only when nobody has a ceiling — then there is genuinely nothing to
+        take a percentage of.
+        """
+        if not allowances[metric]:
+            return None
+        return round(capped_usage[metric] / allowances[metric] * 100)
+
     # Signups this month, so growth is a measured number rather than a guess.
     month_start = datetime.now(timezone.utc).replace(
         day=1, hour=0, minute=0, second=0, microsecond=0,
@@ -123,6 +177,20 @@ async def overview(
         },
         "users": total_users,
         "agents": total_agents,
+        "allowances": {
+            "ai_messages": {
+                "used": usage.get("ai_messages", 0),
+                "limit": allowances["ai_messages"] or None,
+                "percent": _share("ai_messages"),
+                "uncapped_tenants": uncapped_tenants["ai_messages"],
+            },
+            "image_requests": {
+                "used": usage.get("image_requests", 0),
+                "limit": allowances["image_requests"] or None,
+                "percent": _share("image_requests"),
+                "uncapped_tenants": uncapped_tenants["image_requests"],
+            },
+        },
         "usage": {
             "conversations": usage.get("conversations", 0),
             "ai_messages": usage.get("ai_messages", 0),

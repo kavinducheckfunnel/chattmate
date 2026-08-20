@@ -19,13 +19,21 @@ defineProps<{
 
 <template>
   <main class="pf-page">
-    <div class="pf-page-head">
+    <!-- page-heading / heading-actions / back-button are the reference's own
+         class names. Using them here means every page picks up its header
+         treatment from the ported stylesheet rather than from a parallel set of
+         rules that would have to be kept in step by hand. -->
+    <div class="page-heading pf-page-head">
       <div>
-        <RouterLink v-if="back" :to="back.to" class="pf-back">← {{ back.label }}</RouterLink>
+        <RouterLink v-if="back" :to="back.to" class="back-button pf-back">
+          ← {{ back.label }}
+        </RouterLink>
         <h1>{{ title }}</h1>
         <p v-if="description">{{ description }}</p>
       </div>
-      <div v-if="$slots.actions" class="head-actions"><slot name="actions" /></div>
+      <div v-if="$slots.actions" class="heading-actions head-actions">
+        <slot name="actions" />
+      </div>
     </div>
 
     <div v-if="error" class="pf-banner error">{{ error }}</div>
