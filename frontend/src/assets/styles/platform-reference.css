@@ -1842,3 +1842,38 @@
   .pf-shell .volume-chart-footer {margin-left:38px;align-items:flex-start;flex-direction:column;gap:5px}
   .pf-shell .cost-head {grid-template-columns:1fr}
 }
+
+
+/* ===========================================================================
+   Inverted-surface corrections.
+
+   These live at the end of the ported sheet rather than in platform.css because
+   they override rules from this file at equal specificity, and the later
+   declaration wins — from platform.css, which loads first, they lost every tie
+   and the MRR figure stayed dark-on-dark.
+   =========================================================================== */
+
+.pf-shell .billing-primary-card {
+  background: var(--bg-deep);
+  color: #f2f5f8;
+  border: 1px solid var(--o12);
+}
+.pf-shell .billing-primary-card > span,
+.pf-shell .billing-primary-card > div span { color: rgba(242, 245, 248, 0.62); }
+.pf-shell .billing-primary-card > strong,
+.pf-shell .billing-primary-card > div b { color: #f2f5f8; }
+.pf-shell .billing-primary-card > small { color: var(--accent-solid); }
+
+.pf-shell .plan-badge.pro { background: var(--bg-deep); color: #f2f5f8; }
+
+/* The totals row is the one an operator reads first; it had inherited a muted
+   colour that made it fainter than the rows it sums. */
+.pf-shell .provider-cost-list .provider-total span,
+.pf-shell .provider-cost-list .provider-total strong { color: var(--text); }
+
+/* Revenue bars: the fill is the series colour, the AI-cost mark sits on top of
+   it. Both were mapped to near-invisible overlays. */
+.pf-shell .revenue-bar { background: var(--accent-solid); }
+.pf-shell .api-cost-mark { background: var(--c-info); }
+.pf-shell .chart-keys .revenue-key { background: var(--accent-solid); }
+.pf-shell .chart-keys .api-key { background: var(--c-info); }

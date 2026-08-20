@@ -619,3 +619,79 @@ export const savePlanLimits = async (
   tenants_affected: number
   changes: Record<string, Record<string, [number | null, number | null]>>
 }> => (await api.put('/platform/plans/limits', payload)).data
+
+// ── Billing ─────────────────────────────────────────────────────────────────
+//
+// Everything the billing page shows arrives in one call, because every figure
+// on it is a share of the same totals. Split across endpoints, the cards and the
+// table could each be individually correct and still disagree.
+
+export interface BillingPlanRow {
+  plan: string
+  code: string
+  price_cents: number
+  customers: number
+  paid: number
+  revenue_cents: number
+  /** null where the plan has no message ceiling. */
+  allowance: number | null
+  used: number
+  images: number
+  ai_cost_cents: number
+}
+
+export interface BillingSubscription {
+  organization_id: string
+  organization: string
+  domain: string
+  plan: string
+  plan_code: string
+  revenue_cents: number
+  used: number
+  allowance: number | null
+  ai_cost_cents: number
+  /** "Unbilled" or "Free" — no payment processor is connected, so a status of
+   *  "Paid" would be inventing a fact. */
+  status: string
+}
+
+export interface BillingMonth {
+  period: string
+  messages: number
+  ai_cost_cents: number
+  /** Only the current period has a revenue figure that can be stood behind. */
+  revenue_cents: number | null
+}
+
+export interface BillingOverview {
+  period: string
+  currency: string
+  totals: {
+    customers: number
+    paid_customers: number
+    revenue_cents: number
+    average_revenue_cents: number
+    used_messages: number
+    image_requests: number
+    allocated_messages: number
+    has_unlimited_plans: boolean
+    usage_rate: number | null
+    estimated_ai_cost_cents: number
+    api_reserve_cents: number
+    reserve_remaining_cents: number
+    reserve_usage_rate: number
+    net_after_reserve_cents: number
+    margin_after_reserve: number | null
+    ai_spend_share: number | null
+    ai_cost_per_paying_customer_cents: number
+    paid_conversion: number
+  }
+  providers: { text_cost_cents: number; image_cost_cents: number }
+  by_plan: BillingPlanRow[]
+  monthly: BillingMonth[]
+  subscriptions: BillingSubscription[]
+  payments_connected: boolean
+}
+
+export const getPlatformBilling = async (period?: string): Promise<BillingOverview> =>
+  (await api.get<BillingOverview>('/platform/billing', { params: period ? { period } : {} })).data
