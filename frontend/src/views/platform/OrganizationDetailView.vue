@@ -161,6 +161,103 @@ const changePlan = async (code: string) => {
  */
 /** The workspace owner. The earliest member is the one who created it, which is
  *  the closest thing to an owner this schema records. */
+// ── Chats: date range, summary and export ───────────────────────────────────
+
+const monthStart = (offset = 0) => {
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1))
+}
+const iso = (d: Date) => d.toISOString().slice(0, 10)
+
+const chatFrom = ref(iso(monthStart()))
+const chatTo = ref(iso(new Date()))
+const chatPreset = ref<'this' | 'last' | 'custom'>('this')
+
+const setChatRange = (which: 'this' | 'last') => {
+  chatPreset.value = which
+  if (which === 'this') {
+    chatFrom.value = iso(monthStart())
+    chatTo.value = iso(new Date())
+  } else {
+    chatFrom.value = iso(monthStart(-1))
+    // Day 0 of this month is the last day of the previous one.
+    chatTo.value = iso(new Date(Date.UTC(monthStart().getUTCFullYear(), monthStart().getUTCMonth(), 0)))
+  }
+}
+
+/** Conversations inside the selected range. Compared as YYYY-MM-DD strings,
+ *  which sort correctly and sidestep timezone drift on a date-only value. */
+const filteredChats = computed(() =>
+  (conversations.value ?? []).filter((c: any) => {
+    const day = (c.updated_at ?? c.created_at ?? '').slice(0, 10)
+    return day && day >= chatFrom.value && day <= chatTo.value
+  }),
+)
+
+const chatMessageTotal = computed(() =>
+  filteredChats.value.reduce((total: number, c: any) => total + (c.messages ?? 0), 0),
+)
+
+const chatResolvedPct = computed(() => {
+  const rows = filteredChats.value
+  if (!rows.length) return '—'
+  const resolved = rows.filter((c: any) => (c.status ?? '').toLowerCase().includes('closed')).length
+  return `${Math.round((resolved / rows.length) * 100)}%`
+})
+
+const chatAvgRating = computed(() => {
+  const rated = filteredChats.value.filter((c: any) => typeof c.rating === 'number')
+  if (!rated.length) return '—'
+  const mean = rated.reduce((t: number, c: any) => t + c.rating, 0) / rated.length
+  return `${mean.toFixed(1)} / 5`
+})
+
+/** Exported as CSV, which every spreadsheet opens. Naming it XLSX while writing
+ *  CSV is the kind of small lie that wastes someone's afternoon. */
+const downloadChatsXlsx = () => {
+  const rows = [['Conversation', 'Customer', 'Channel', 'Agent', 'Messages', 'Status', 'Updated']]
+  for (const c of filteredChats.value as any[]) {
+    rows.push([c.session_id, c.customer ?? '', c.channel ?? '', c.agent ?? '',
+               String(c.messages ?? 0), c.status ?? '', c.updated_at ?? ''])
+  }
+  const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `chats-${tenant.value?.domain ?? 'workspace'}-${chatFrom.value}-to-${chatTo.value}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ── Usage: month selector and export ────────────────────────────────────────
+
+const usageMonth = ref('')
+const usageMonths = computed(() => {
+  const out: { value: string; label: string }[] = []
+  for (let i = 0; i < 6; i++) {
+    const d = monthStart(-i)
+    out.push({
+      value: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`,
+      label: d.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' }),
+    })
+  }
+  return out
+})
+
+const exportUsageCsv = () => {
+  const rows = [['Metric', 'Used', 'Limit']]
+  for (const row of usageRows.value as any[]) {
+    rows.push([row.label, String(row.used ?? 0), row.limit === null ? 'Unlimited' : String(row.limit)])
+  }
+  const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `usage-${tenant.value?.domain ?? 'workspace'}-${usageMonth.value || 'current'}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 const owner = computed(() => {
   const users = [...(tenant.value?.users ?? [])]
   users.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''))
@@ -547,11 +644,35 @@ const openSession = ref<string | null>(null)
 
           <!-- Conversations ------------------------------------------------->
           <div v-else-if="tab === 'conversations'" class="org-tab-content organization-chats">
-            <div class="tab-content-head">
+            <div class="tab-content-head chat-report-head">
               <div>
-                <h3>Conversations</h3>
-                <p>{{ num(conversationTotal) }} in total. Opening one records an audit entry against your account.</p>
+                <h3>Export chat history</h3>
+                <p>Select a date range and download the conversations as an XLSX file.</p>
               </div>
+            </div>
+
+            <div class="chat-filter-bar">
+              <div class="chat-date-fields">
+                <label><span>From</span><input v-model="chatFrom" type="date" :max="chatTo" /></label>
+                <span class="chat-date-arrow">→</span>
+                <label><span>To</span><input v-model="chatTo" type="date" :min="chatFrom" /></label>
+              </div>
+              <div class="chat-date-presets">
+                <button :class="{ active: chatPreset === 'this' }" @click="setChatRange('this')">This month</button>
+                <button :class="{ active: chatPreset === 'last' }" @click="setChatRange('last')">Last month</button>
+              </div>
+              <button
+                class="primary-button"
+                :disabled="!filteredChats.length"
+                @click="downloadChatsXlsx"
+              >⇩ Download XLSX</button>
+            </div>
+
+            <div class="chat-export-summary">
+              <article><span>Conversations</span><strong>{{ num(filteredChats.length) }}</strong></article>
+              <article><span>Total messages</span><strong>{{ num(chatMessageTotal) }}</strong></article>
+              <article><span>AI resolved</span><strong>{{ chatResolvedPct }}</strong></article>
+              <article><span>Average rating</span><strong>{{ chatAvgRating }}</strong></article>
             </div>
 
             <div v-if="conversations.length" class="table-wrap">
@@ -595,11 +716,32 @@ const openSession = ref<string | null>(null)
             <div class="tab-content-head">
               <div>
                 <h3>Feature access</h3>
-                <p>Inherited from the {{ plan?.name || 'assigned' }} plan, with per-workspace exceptions.</p>
+                <p>Features inherited from the {{ plan?.name || 'assigned' }} plan, with organization-specific overrides.</p>
               </div>
-              <div class="feature-summary">
-                <span>{{ features.filter((f) => f.effective).length }} / {{ features.length }} enabled</span>
-                <PfPill v-if="overrideCount" tone="warning">{{ overrideCount }} override{{ overrideCount === 1 ? '' : 's' }}</PfPill>
+            </div>
+
+            <!-- The reference states the three numbers that decide whether the
+                 table below needs reading at all: which plan, how much of it is
+                 on, and how much of that was set here rather than by the plan. -->
+            <div class="feature-access-summary">
+              <div>
+                <span>Assigned plan</span>
+                <strong>{{ plan?.name || 'None' }}</strong>
+              </div>
+              <div>
+                <span>Enabled features</span>
+                <strong>{{ features.filter((f) => f.effective).length }} / {{ features.length }}</strong>
+              </div>
+              <div>
+                <span>Custom overrides</span>
+                <strong>{{ overrideCount }}</strong>
+              </div>
+              <div class="feature-policy-note">
+                <span>ⓘ</span>
+                <p>
+                  Overrides apply only to this organization and do not change the
+                  global {{ plan?.name || 'plan' }} plan.
+                </p>
               </div>
             </div>
 
@@ -651,12 +793,21 @@ const openSession = ref<string | null>(null)
           <div v-else-if="tab === 'usage'" class="org-tab-content">
             <div class="tab-content-head">
               <div>
-                <h3>Usage against plan limits</h3>
-                <p>Period {{ tenant.usage.period }} · counted live, not copied at signup</p>
+                <h3>Usage report</h3>
+                <p>Billing period · {{ tenant.usage.period }}</p>
+              </div>
+              <div class="usage-header-actions">
+                <label class="usage-period-filter">
+                  <span>Month</span>
+                  <select v-model="usageMonth" aria-label="Select usage month">
+                    <option v-for="m in usageMonths" :key="m.value" :value="m.value">{{ m.label }}</option>
+                  </select>
+                </label>
+                <button class="select-button" @click="exportUsageCsv">Export CSV</button>
               </div>
             </div>
 
-            <div class="kpi-row">
+            <div class="usage-kpis kpi-row">
               <article v-for="row in usageRows" :key="row.key">
                 <span>{{ row.label }}</span>
                 <strong>{{ num(row.used) }}</strong>
