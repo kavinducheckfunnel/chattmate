@@ -118,6 +118,53 @@ const displayValue = (plan: PlatformPlan, row: TermRow): string => {
   return row.unit ? `${num(value)} ${row.unit}` : num(value)
 }
 
+/** Which top-bar the card gets.
+ *
+ * The reference keys this off the plan code (free / base / pro) and its CSS
+ * paints grey, lime and dark accordingly. Codes here may not be those three, so
+ * a known code uses its own tone and anything else falls back to position —
+ * which keeps a fourth tier like Scale from rendering with no accent at all.
+ */
+const cardTone = (plan: PlatformPlan, index: number) =>
+  ['free', 'base', 'pro'].includes(plan.code)
+    ? plan.code
+    : PLAN_ACCENTS[index % PLAN_ACCENTS.length]
+
+/** The six lines a plan card sells itself with.
+ *
+ * Phrased as offers rather than as a metric name beside a number: "1 knowledge
+ * source · 10 sub-pages" is what a customer is buying; "1 knowledge_docs" is
+ * what the database calls it.
+ */
+const planHighlights = (plan: PlatformPlan): string[] => {
+  const limits = plan.limits ?? ({} as Record<string, number | null>)
+  const policies = plan.policies ?? {}
+  const plural = (n: number | null | undefined, one: string, many = `${one}s`) =>
+    n === 1 ? `1 ${one}` : `${num(n ?? 0)} ${many}`
+
+  const agents = limits.agents
+  const sources = limits.knowledge_docs
+  const subpages = policies.max_subpages_per_source
+  const messages = limits.ai_messages
+  const images = limits.image_requests
+  const retention = policies.data_retention_days
+
+  return [
+    agents === null ? 'Unlimited AI agents' : plural(agents, 'AI agent'),
+    messages === null ? 'Unlimited messages / month' : `${num(messages ?? 0)} messages / month`,
+    sources === null
+      ? 'Unlimited knowledge sources'
+      : `${plural(sources, 'knowledge source')}${subpages ? ` · ${num(subpages)} sub-pages` : ''}`,
+    images === null
+      ? 'Unlimited image requests / month'
+      : images
+        ? `${num(images)} image requests / month`
+        : 'No image analysis',
+    retention ? `${num(retention)}-day data retention` : 'Unlimited data retention',
+    plan.price_cents ? 'All integrations' : 'WhatsApp integration',
+  ]
+}
+
 const PLAN_ACCENTS = ['', 'accent', 'purple', 'teal']
 const accentFor = (i: number) => PLAN_ACCENTS[i % PLAN_ACCENTS.length]
 
@@ -397,29 +444,33 @@ const unconfigured = computed(
           v-for="(plan, i) in plans"
           :key="plan.code"
           class="plan-card"
-          :class="accentFor(i)"
+          :class="cardTone(plan, i)"
         >
           <div class="plan-top">
             <div>
-              <span class="plan-kicker">{{ plan.code }}</span>
+              <span class="plan-kicker">{{ plan.name }}</span>
               <h2>
                 {{ plan.price_cents ? money(plan.price_cents / 100).replace('.00', '') : '$0' }}
-                <small>{{ plan.price_cents ? '/month' : ' forever' }}</small>
+                <small>{{ plan.price_cents ? '/agent/month' : ' forever' }}</small>
               </h2>
               <p>{{ plan.description || 'No description' }}</p>
             </div>
             <PfPill v-if="plan.is_default" tone="accent">Default</PfPill>
             <PfPill v-else-if="!plan.is_active" tone="neutral">Retired</PfPill>
+            <button v-else class="icon-button" :aria-label="`Actions for ${plan.name}`">•••</button>
           </div>
 
           <div class="plan-users">
             {{ num(plan.tenant_count) }}
-            {{ plan.tenant_count === 1 ? 'workspace' : 'workspaces' }}
+            {{ plan.tenant_count === 1 ? 'organization' : 'organizations' }}
           </div>
 
+          <!-- Written the way the reference words them — "1 AI agent",
+               "1 knowledge source · 10 sub-pages" — rather than a bare number
+               beside a column name, which reads as a spec sheet, not an offer. -->
           <ul>
-            <li v-for="f in LIMIT_FIELDS" :key="f.key">
-              <span>✓</span>{{ limitText(plan, f.metric) }} {{ f.label.toLowerCase() }}
+            <li v-for="line in planHighlights(plan)" :key="line">
+              <span>✓</span>{{ line }}
             </li>
           </ul>
 
@@ -506,10 +557,11 @@ const unconfigured = computed(
       <section class="panel table-panel">
         <div class="table-toolbar">
           <div>
-            <h2 class="section-title">Feature availability</h2>
+            <h2 class="section-title">Complete feature availability</h2>
             <p class="section-sub">
-              Every switch here is enforced by real code — the path is named under
-              each capability, so nothing in this table is decorative.
+              Every customer-facing capability included in each plan. Each switch
+              is enforced by real code — the path is named under each capability,
+              so nothing in this table is decorative.
             </p>
           </div>
           <div class="toolbar-actions">
