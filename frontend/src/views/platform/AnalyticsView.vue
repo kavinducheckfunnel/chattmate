@@ -13,7 +13,6 @@ anything" look identical on a dashboard and mean opposite things.
 import { ref, computed, onMounted, watch } from 'vue'
 import PfPage from '@/components/platform/ui/PfPage.vue'
 import PfPill from '@/components/platform/ui/PfPill.vue'
-import PfMetric from '@/components/platform/ui/PfMetric.vue'
 import PfDonut from '@/components/platform/ui/PfDonut.vue'
 import PfBars from '@/components/platform/ui/PfBars.vue'
 import { getPlatformAnalytics, getPlatformPlans, type PlatformAnalytics, type PlatformPlan } from '@/services/platform'
@@ -180,42 +179,47 @@ const outcomeSlices = computed(() => {
         </div>
       </section>
 
-      <section class="metrics-grid five">
-        <PfMetric
-          label="Active workspaces"
-          :value="num(data.active_organizations)"
-          delta="had a conversation"
-          icon="org"
-        />
-        <PfMetric
-          label="Conversations"
-          :value="compact(data.conversations.total)"
-          :delta="`${compact(data.conversations.messages)} messages`"
-          icon="message"
-        />
-        <PfMetric
-          label="AI handled alone"
-          :value="resolutionRate === null ? '—' : `${resolutionRate}%`"
-          :delta="resolutionRate === null ? 'No conversations yet' : `${compact(data.conversations.ai_only)} conversations`"
-          :delta-tone="resolutionRate !== null && resolutionRate >= 70 ? 'success' : 'neutral'"
-          icon="agents"
-          tone="teal"
-        />
-        <PfMetric
-          label="Human handovers"
-          :value="compact(data.conversations.handovers)"
-          :delta="data.conversations.total ? `${Math.round((data.conversations.handovers / data.conversations.total) * 100)}% of conversations` : 'None'"
-          icon="humans"
-          tone="purple"
-        />
-        <PfMetric
-          label="Customer satisfaction"
-          :value="data.satisfaction.average === null ? '—' : `${data.satisfaction.average} / 5`"
-          :delta="data.satisfaction.responses ? `${num(data.satisfaction.responses)} ratings` : 'No ratings yet'"
-          :delta-tone="data.satisfaction.average !== null && data.satisfaction.average >= 4 ? 'success' : 'neutral'"
-          icon="trend"
-          tone="coral"
-        />
+      <!-- The reference's own KPI row: label, figure, note. Not PfMetric —
+           that renders an icon/copy/pill trio into .metric-card's three-column
+           grid, and on this page the note landed in the pill column and sat on
+           top of the label. -->
+      <section class="analytics-kpis">
+        <article>
+          <span>Conversations</span>
+          <strong>{{ compact(data.conversations.total) }}</strong>
+          <small>{{ compact(data.conversations.messages) }} messages exchanged</small>
+        </article>
+        <article>
+          <span>AI-resolved</span>
+          <strong>{{ compact(data.conversations.ai_only) }}</strong>
+          <small>
+            <b v-if="resolutionRate !== null" class="positive">{{ resolutionRate }}%</b>
+            {{ resolutionRate === null ? 'No conversations yet' : 'resolution rate' }}
+          </small>
+        </article>
+        <article>
+          <span>Human handovers</span>
+          <strong>{{ compact(data.conversations.handovers) }}</strong>
+          <small>
+            {{ data.conversations.total
+              ? `${Math.round((data.conversations.handovers / data.conversations.total) * 100)}% of conversations`
+              : 'None' }}
+          </small>
+        </article>
+        <article>
+          <span>Active workspaces</span>
+          <strong>{{ num(data.active_organizations) }}</strong>
+          <small>had a conversation in this window</small>
+        </article>
+        <article>
+          <span>Customer satisfaction</span>
+          <strong>{{ data.satisfaction.average === null ? '—' : data.satisfaction.average }}</strong>
+          <small>
+            {{ data.satisfaction.responses
+              ? `from ${num(data.satisfaction.responses)} ratings`
+              : 'No ratings yet' }}
+          </small>
+        </article>
       </section>
 
       <div v-if="!data.conversations.total" class="pf-banner info">
