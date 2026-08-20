@@ -107,7 +107,26 @@ const volumeStats = computed(() => {
   }
 })
 
-const CHANNEL_COLORS = ['var(--accent-ink)', 'var(--c-teal)', 'var(--c-purple)', 'var(--c-coral)', 'var(--muted2)']
+
+/** Channels as ordered rows with a share and a colour, largest first.
+ *
+ * Shares are rounded for display but the bar uses them directly, so a rounding
+ * residue shows as a hairline gap rather than as a bar that overflows its
+ * track — which is what happens if you force the last segment to fill. */
+const CHANNEL_COLORS = ['var(--accent-solid)', '#1f2937', '#7b71f5', 'var(--muted)', 'var(--c-info)']
+const channelRows = computed(() => {
+  const total = data.value?.conversations.total || 0
+  if (!total) return []
+  return [...(data.value?.channels ?? [])]
+    .sort((a, b) => b.count - a.count)
+    .map((c, i) => ({
+      channel: c.channel,
+      label: c.channel === 'web' ? 'Web chatbot' : c.channel.charAt(0).toUpperCase() + c.channel.slice(1),
+      count: c.count,
+      share: Math.round((c.count / total) * 100),
+      color: CHANNEL_COLORS[i % CHANNEL_COLORS.length],
+    }))
+})
 
 const channelSlices = computed(() =>
   (data.value?.channels ?? []).map((c, i) => ({
@@ -254,12 +273,29 @@ const outcomeSlices = computed(() => {
               <p>Where conversations arrive from</p>
             </div>
           </div>
-          <PfDonut
-            v-if="channelSlices.length"
-            :slices="channelSlices"
-            :total="data.conversations.total"
-            caption="conversations"
-          />
+          <!-- The reference states the total, then a single stacked bar, then a
+               row per channel with its count and share. A donut makes the reader
+               estimate an angle; the rows give them the number. -->
+          <template v-if="channelRows.length">
+            <div class="channel-total">
+              <strong>{{ compact(data.conversations.total) }}</strong>
+              <span>total conversations</span>
+            </div>
+            <div class="channel-bar">
+              <i
+                v-for="row in channelRows"
+                :key="row.channel"
+                :style="{ width: `${row.share}%`, background: row.color }"
+                :title="`${row.label} — ${row.count} (${row.share}%)`"
+              />
+            </div>
+            <div class="channel-legend">
+              <div v-for="row in channelRows" :key="row.channel">
+                <span><i :style="{ background: row.color }" />{{ row.label }}</span>
+                <strong>{{ num(row.count) }}<small>{{ row.share }}%</small></strong>
+              </div>
+            </div>
+          </template>
           <div v-else class="empty-state">
             <strong>No channel data</strong>
             <span>Connect a channel to see the split.</span>

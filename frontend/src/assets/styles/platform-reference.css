@@ -1918,3 +1918,20 @@
 .pf-shell .analytics-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 @media (max-width: 1150px) { .pf-shell .analytics-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 720px)  { .pf-shell .analytics-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Channel mix: total, one stacked bar, a row per channel. */
+.pf-shell .channel-total { display: flex; align-items: baseline; gap: 8px; margin: 4px 0 14px; }
+.pf-shell .channel-total strong { font-size: 26px; letter-spacing: -.6px; }
+.pf-shell .channel-total span { color: var(--muted); font-size: 11px; }
+.pf-shell .channel-bar { display: flex; height: 10px; border-radius: 99px; overflow: hidden; background: var(--o08); }
+.pf-shell .channel-bar i { display: block; height: 100%; }
+.pf-shell .channel-legend { display: flex; flex-direction: column; margin-top: 16px; }
+.pf-shell .channel-legend > div {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--o08);
+}
+.pf-shell .channel-legend > div:last-child { border-bottom: 0; }
+.pf-shell .channel-legend span { display: flex; align-items: center; gap: 9px; font-size: 12px; }
+.pf-shell .channel-legend span i { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.pf-shell .channel-legend strong { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.pf-shell .channel-legend small { color: var(--muted); font-size: 10px; }
