@@ -43,6 +43,14 @@ def is_hosted_model(db: Session, organization_id: UUID) -> bool:
     config = AIConfigRepository(db).get_active_config(organization_id)
     if not config:
         return False
+
+    # The flag is authoritative: model_type now records the real provider behind
+    # the managed model (Gemini, DeepSeek, …) so the right client gets built, and
+    # reading it alone would bill a hosted Gemini tenant as if they were BYO-key.
+    if getattr(config, "is_platform_managed", False):
+        return True
+
+    # Legacy: the enterprise submodule still writes CHATTERMATE as a model_type.
     model_type = (
         config.model_type.value if hasattr(config.model_type, "value")
         else str(config.model_type)

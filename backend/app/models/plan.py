@@ -55,6 +55,22 @@ class Plan(Base):
     max_seats = Column(Integer, nullable=True)
     max_knowledge_docs = Column(Integer, nullable=True)
     max_storage_mb = Column(Integer, nullable=True)
+    # Images cost more per call than text and are answered by a different model,
+    # so they are sold as their own allowance rather than drawn from messages.
+    max_image_requests_per_month = Column(Integer, nullable=True)
+
+    # Ceiling on pages crawled per knowledge source. Not a billing period metric:
+    # it caps the breadth of a single crawl, so it is checked while ingesting
+    # rather than counted against a monthly total.
+    max_subpages_per_source = Column(Integer, nullable=True)
+
+    # What a message beyond the monthly allowance costs, in minor units. NULL is
+    # not "free" — it means overage is not offered on this tier and the tenant is
+    # blocked at the limit instead, which is how the Free plan behaves.
+    overage_price_cents_per_message = Column(Integer, nullable=True)
+
+    # How long conversation history is kept. NULL means indefinitely.
+    data_retention_days = Column(Integer, nullable=True)
 
     # Display order in the pricing table; keeps presentation out of the code.
     sort_order = Column(Integer, nullable=False, default=0)
@@ -75,7 +91,18 @@ class Plan(Base):
         "seats": "max_seats",
         "knowledge_docs": "max_knowledge_docs",
         "storage_mb": "max_storage_mb",
+        "image_requests": "max_image_requests_per_month",
     }
+
+    # Settings the operator edits alongside the limits, but which are not usage
+    # ceilings and so must never be metered against. Kept apart from
+    # LIMIT_COLUMNS deliberately: anything listed there is something `check()`
+    # will enforce per billing period, and a price is not a quantity.
+    POLICY_COLUMNS = (
+        "max_subpages_per_source",
+        "overage_price_cents_per_message",
+        "data_retention_days",
+    )
 
     def limit_for(self, metric: str):
         """The ceiling for `metric`, or None for unlimited.
@@ -102,5 +129,8 @@ class Plan(Base):
             "limits": {
                 metric: getattr(self, column)
                 for metric, column in self.LIMIT_COLUMNS.items()
+            },
+            "policies": {
+                column: getattr(self, column) for column in self.POLICY_COLUMNS
             },
         }

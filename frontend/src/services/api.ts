@@ -95,6 +95,49 @@ api.interceptors.request.use(
   (error) => Promise.reject(error),
 )
 
+// One in-flight refresh, shared by every request that gets a 401.
+//
+// A page load fires several requests at once, so an expired access token
+// produces a burst of simultaneous 401s. Each used to run its own refresh; the
+// browser then raced several Set-Cookie responses for the same cookie, and any
+// single one that lost the race signed the user out from under the others.
+let refreshInFlight: Promise<void> | null = null
+
+const refreshSession = (): Promise<void> => {
+  if (!refreshInFlight) {
+    refreshInFlight = axios
+      .post('/users/refresh', {}, { withCredentials: true, baseURL: getApiUrl() })
+      .then(() => undefined)
+      .finally(() => {
+        refreshInFlight = null
+      })
+  }
+  return refreshInFlight
+}
+
+/**
+ * Whether a failed refresh means the session is genuinely gone.
+ *
+ * Only the server rejecting the refresh token says that. A network drop, a
+ * timeout, a 502 while the backend restarts mid-deploy — those say nothing
+ * about the session, and treating them as expiry is what logged people out at
+ * random. In those cases the request just fails and the session survives.
+ */
+const isSessionExpired = (error: unknown): boolean => {
+  const status = (error as AxiosError)?.response?.status
+  return status === 401 || status === 403
+}
+
+const endSession = () => {
+  document.cookie = 'user_info=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
+  try {
+    userService.clearCurrentUser()
+  } catch {}
+  if (router.currentRoute.value.path !== '/login') {
+    router.push('/login')
+  }
+}
+
 // Response interceptor
 api.interceptors.response.use(
   (response) => response,
@@ -105,38 +148,20 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       // If there's no authenticated user, do not attempt refresh. Go to login directly.
       if (!userService.isAuthenticated()) {
-        // Clear any stale user info
-        document.cookie = 'user_info=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-        userService.clearCurrentUser()
-        router.push('/login')
+        endSession()
         return Promise.reject(error)
       }
 
       originalRequest._retry = true
 
       try {
-        // Try to refresh token
-        await axios.post(
-          '/users/refresh',
-          {},
-          {
-            withCredentials: true,
-            baseURL: getApiUrl(),
-          },
-        )
-
+        await refreshSession()
         // Retry original request
         return api(originalRequest)
       } catch (refreshError) {
-        // Clear user info cookie
-        document.cookie = 'user_info=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-        // Remove any cached auth state so guards don't think we're logged in
-        try {
-          userService.clearCurrentUser()
-        } catch {}
-
-        // Redirect to login if refresh fails
-        router.push('/login')
+        if (isSessionExpired(refreshError)) {
+          endSession()
+        }
         return Promise.reject(refreshError)
       }
     }

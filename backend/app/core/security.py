@@ -31,8 +31,26 @@ logger = get_logger(__name__)
 SECRET_KEY = settings.SECRET_KEY
 CONVERSATION_SECRET_KEY = settings.CONVERSATION_SECRET_KEY
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+# Session length. The refresh token is what actually keeps someone signed in:
+# the access token expiring is routine and invisible, because the client trades
+# the refresh token for a new one without involving the user. So the access
+# token stays comfortably short-lived while the refresh window is long.
+#
+# These were 30 minutes / 7 days, which signed people out mid-week for no reason
+# they could see.
+ACCESS_TOKEN_EXPIRE_MINUTES = 720          # 12 hours
+REFRESH_TOKEN_EXPIRE_DAYS = 90
+
+# Cookie max-age values, derived rather than written out again. The literals
+# they replace had already drifted from their own comments — the login handler
+# set the access cookie to `max_age=180  # 30 minutes`, three minutes, which is
+# why sessions kept dropping almost immediately after signing in.
+ACCESS_COOKIE_MAX_AGE = ACCESS_TOKEN_EXPIRE_MINUTES * 60
+REFRESH_COOKIE_MAX_AGE = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+# The SPA reads this one to know who is signed in; it must outlive neither more
+# nor less than the refresh token that can still revive the session.
+USER_INFO_COOKIE_MAX_AGE = REFRESH_COOKIE_MAX_AGE
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

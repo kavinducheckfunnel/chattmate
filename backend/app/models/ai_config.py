@@ -42,6 +42,19 @@ class AIConfig(Base):
     model_type = Column(SQLEnum(AIModelType), nullable=False)
     model_name = Column(String, nullable=False)  # e.g. "gpt-4", "claude-3"
     encrypted_api_key = Column(String, nullable=False)
+
+    # True when these credentials belong to the platform rather than the tenant,
+    # i.e. they selected the managed model instead of bringing their own key.
+    #
+    # This is a separate flag rather than a CHATTERMATE value in model_type
+    # because model_type has to stay the *real* provider: create_model() switches
+    # on it to pick the client, and a managed config backed by Gemini or DeepSeek
+    # would otherwise be handed to the OpenAI client and fail on first use.
+    #
+    # It is also what decides who pays. Metering reads this flag, so a tenant on
+    # their own key is never counted against the platform's message budget.
+    is_platform_managed = Column(Boolean, nullable=False, default=False,
+                                 server_default="false")
     # For additional model-specific settings
     settings = Column(JSON, nullable=True, default={
         "instructions": [

@@ -24,8 +24,15 @@ class AIConfigRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_config(self, org_id: str, model_type: str, model_name: str, api_key: str) -> AIConfig:
-        """Create a new AI configuration"""
+    def create_config(self, org_id: str, model_type: str, model_name: str, api_key: str,
+                      is_platform_managed: bool = False) -> AIConfig:
+        """Create a new AI configuration
+
+        `is_platform_managed` records that the key belongs to the platform rather
+        than this tenant, which is what decides whose provider bill their usage
+        lands on. It defaults to False so a caller that forgets it creates a
+        BYO-key config — the option that is never billed to the platform.
+        """
         try:
             # Encrypt API key before storing
             encrypted_key = encrypt_api_key(api_key)
@@ -36,7 +43,8 @@ class AIConfigRepository:
                 model_type=AIModelType(model_type.upper()),
                 model_name=model_name,
                 encrypted_api_key=encrypted_key,
-                is_active=True
+                is_active=True,
+                is_platform_managed=is_platform_managed
             )
 
             # Deactivate any existing configs

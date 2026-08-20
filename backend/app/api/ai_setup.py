@@ -30,6 +30,7 @@ import os
 
 from app.models.ai_config import AIModelType
 from app.core.model_catalog import is_known_provider, list_providers
+from app.services import platform_ai
 
 # Try to import enterprise modules
 try:
@@ -76,12 +77,73 @@ def check_custom_models_feature_access(current_user: User, db: Session):
 # provider is known — the live API-key test rejects a bad model ID.
 
 
+def _setup_platform_model(db: Session, current_user: User) -> AISetupResponse:
+    """Point this organization at the platform's managed model.
+
+    The provider's real identity is stored in model_type so the right client gets
+    built, with is_platform_managed recording whose account pays. Copying the key
+    onto the tenant row keeps every existing consumer working unchanged; the
+    console re-points these rows whenever the operator rotates the key.
+    """
+    credentials = platform_ai.text_credentials(db)
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "The managed model is not available yet — the platform operator "
+                "has not finished configuring it. Use your own provider key for now."
+            ),
+        )
+
+    provider, model_name, api_key = credentials
+    ai_config = AIConfigRepository(db).create_config(
+        org_id=current_user.organization_id,
+        model_type=provider,
+        model_name=model_name,
+        api_key=api_key,
+        is_platform_managed=True,
+    )
+    logger.info(
+        "Org %s switched to the platform model (%s/%s)",
+        current_user.organization_id, provider, model_name,
+    )
+    return AISetupResponse(
+        message="AI configuration completed successfully",
+        config=AIConfigResponse(
+            id=ai_config.id,
+            organization_id=ai_config.organization_id,
+            model_type=ai_config.model_type,
+            model_name=ai_config.model_name,
+            is_active=ai_config.is_active,
+            settings=ai_config.settings
+        )
+    )
+
+
 @router.get("/providers")
 async def get_providers(
     current_user: User = Depends(require_permissions("manage_ai_config")),
+    db: Session = Depends(get_db),
 ):
-    """Return the catalog of selectable providers and their suggested models."""
-    return {"providers": list_providers()}
+    """Return the catalog of selectable providers and their suggested models.
+
+    The managed option is listed first and only when the operator has actually
+    configured it — offering a model that cannot answer would fail on the
+    tenant's first real conversation rather than here.
+    """
+    providers = list_providers()
+
+    if not HAS_ENTERPRISE and platform_ai.get_config(db).is_configured:
+        providers = [{
+            "value": "CHATTERMATE",
+            "label": "ChatterMate (managed)",
+            "requires_api_key": False,
+            "custom_allowed": False,
+            "api_key_url": "",
+            "models": [{"value": "chattermate", "label": "Managed model"}],
+        }] + providers
+
+    return {"providers": providers}
 
 
 # Override model validation in the schemas
@@ -100,11 +162,17 @@ async def setup_ai(
         
         # Check if this is a custom model setup (not ChatterMate)
         is_custom_model = not (config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate')
-        
+
         # Check feature access for custom models
         if is_custom_model:
             check_custom_models_feature_access(current_user, db)
-        
+
+        # The managed model, backed by the operator's own provider account.
+        # Deliberately ungated: it is the option a tenant on any plan can use, and
+        # their consumption is capped by their plan's message allowance instead.
+        if not HAS_ENTERPRISE and not is_custom_model:
+            return _setup_platform_model(db, current_user)
+
         # Check if using ChatterMate model
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
             # Use Groq as provider with keys from env
@@ -281,7 +349,19 @@ async def update_ai_config(
                 status_code=404,
                 detail="No active AI configuration found to update"
             )
-        
+
+        # Switching to the managed model. create_config deactivates the previous
+        # row rather than mutating it, so a tenant moving off their own key does
+        # not leave that key sitting on a live record.
+        if not HAS_ENTERPRISE and not is_custom_model:
+            return _setup_platform_model(db, current_user)
+
+        # Moving from the managed model back to their own key: the row must stop
+        # being platform-managed, or their own spend would keep being metered
+        # against the platform's budget.
+        if current_config.is_platform_managed:
+            current_config.is_platform_managed = False
+
         # Check if using ChatterMate model
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
             # Use Groq as provider with keys from env

@@ -30,7 +30,10 @@ from app.models.user import User
 from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.models.schemas.user import AdminPasswordReset, TeammateResponse, UserCreate, UserStatusUpdate, UserUpdate, UserResponse, TokenResponse
 from datetime import datetime, timezone
-from app.core.security import create_access_token, create_refresh_token, validate_password_strength, verify_token
+from app.core.security import (
+    create_access_token, create_refresh_token, validate_password_strength, verify_token,
+    ACCESS_COOKIE_MAX_AGE, REFRESH_COOKIE_MAX_AGE, USER_INFO_COOKIE_MAX_AGE,
+)
 from app.core.auth import INBOX_PERMISSIONS, get_current_user, require_any_permission, require_permissions
 from app.core.logger import get_logger
 from app.repositories.user import UserRepository
@@ -557,7 +560,7 @@ async def login(
             httponly=True,
             secure=True,
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=180  # 30 minutes
+            max_age=ACCESS_COOKIE_MAX_AGE
         )
         response.set_cookie(
             key="refresh_token",
@@ -565,7 +568,7 @@ async def login(
             httponly=True,
             secure=True,
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=604800  # 7 days
+            max_age=REFRESH_COOKIE_MAX_AGE
         )
 
         # Set session data with role information
@@ -591,7 +594,7 @@ async def login(
             value=quote(user_info),  # URL encode the JSON string
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
             secure=True,  # Required when samesite="none"
-            max_age=604800  # 7 days
+            max_age=USER_INFO_COOKIE_MAX_AGE
         )
 
         # Handle Shopify shop update if shop_id is provided in query params
@@ -757,7 +760,7 @@ async def refresh_token(
             httponly=True,
             secure=True,
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=1800  # 30 minutes
+            max_age=ACCESS_COOKIE_MAX_AGE
         )
         response.set_cookie(
             key="refresh_token",
@@ -765,7 +768,7 @@ async def refresh_token(
             httponly=True,
             secure=True,
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=604800  # 7 days
+            max_age=REFRESH_COOKIE_MAX_AGE
         )
 
         # Set session data
@@ -791,7 +794,7 @@ async def refresh_token(
             value=quote(user_info),  # URL encode the JSON string
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
             secure=True,  # Required when samesite="none"
-            max_age=604800  # 7 days
+            max_age=USER_INFO_COOKIE_MAX_AGE
         )
 
         return {

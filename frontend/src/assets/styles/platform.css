@@ -1537,3 +1537,257 @@ own palette.
   .pf-shell .pf-drawer { width: 100%; }
   .pf-shell .ring-grid { gap: 32px; }
 }
+
+/* ── AI model setup ─────────────────────────────────────────────────────────
+   The operator's own provider accounts. Laid out as numbered steps because the
+   three sections are read in order — text is required before image is useful,
+   and the fallback can only borrow a key one of the first two has already set. */
+
+.pf-shell .ai-setup { display: flex; flex-direction: column; gap: 28px; }
+
+.pf-shell .ai-setup-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pf-shell .ai-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 16px;
+  padding-top: 24px;
+  border-top: 1px solid var(--o08);
+}
+.pf-shell .ai-step:first-of-type { border-top: 0; padding-top: 0; }
+
+.pf-shell .ai-step-num {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-solid);
+  color: var(--accent-ink);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-shell .ai-step-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pf-shell .ai-step-body h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text);
+}
+.pf-shell .ai-step-body .section-sub { margin: -10px 0 0; }
+
+.pf-shell .form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+
+.pf-shell .ai-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--o08);
+  border-radius: var(--radius-lg);
+  background: var(--o04);
+}
+.pf-shell .ai-fallback-picks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+/* Where a message actually goes, restated in one line. The two models are
+   configured far apart on the page, so the routing they add up to is worth
+   showing rather than leaving the operator to infer. */
+.pf-shell .ai-routing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft, var(--o04));
+  border: 1px solid var(--o08);
+}
+.pf-shell .ai-routing > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.pf-shell .ai-routing span { font-size: var(--text-xs); color: var(--muted); }
+.pf-shell .ai-routing strong { font-size: var(--text-sm); color: var(--text); }
+.pf-shell .ai-routing-arrow { color: var(--muted); font-size: var(--text-lg, 18px); }
+
+.pf-shell .ai-setup-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-top: 20px;
+  border-top: 1px solid var(--o08);
+}
+
+/* ── Editable plan-limit cells ───────────────────────────────────────────── */
+
+.pf-shell .term-input {
+  height: 34px;
+  width: 100%;
+  min-width: 88px;
+  padding: 0 10px;
+  border: 1px solid var(--o12);
+  border-radius: var(--radius-md);
+  background: var(--o04);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+}
+.pf-shell .term-input:focus {
+  border-color: var(--accent-border);
+  box-shadow: var(--ring-focus);
+}
+.pf-shell .edit-hint { margin: 14px 0 0; }
+
+/* ── Apply-changes dialog ────────────────────────────────────────────────── */
+
+.pf-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--scrim, rgba(6, 8, 12, 0.62));
+  overflow-y: auto;
+}
+
+.pf-modal {
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  border: 1px solid var(--o08);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+.pf-modal-head { display: flex; align-items: flex-start; gap: 14px; }
+.pf-modal-head h2 {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--font-weight-semibold);
+}
+.pf-modal-head p { margin: 4px 0 0; font-size: var(--text-sm); color: var(--muted); }
+.pf-modal-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-md);
+  background: var(--accent-solid);
+  color: var(--accent-ink);
+}
+.pf-modal-close {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--o04);
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pf-modal-body { display: flex; flex-direction: column; gap: 12px; }
+
+.pf-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--o12);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+.pf-choice-active { border-color: var(--accent-border); background: var(--o04); }
+.pf-choice input { margin-top: 2px; accent-color: var(--accent-solid); }
+.pf-choice-text { display: flex; flex-direction: column; gap: 4px; }
+.pf-choice-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+}
+.pf-choice-badge {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-solid);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+}
+.pf-choice-detail { font-size: var(--text-xs); color: var(--muted); }
+
+.pf-modal-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--o04);
+}
+.pf-modal-summary > div { display: flex; justify-content: space-between; gap: 16px; }
+.pf-modal-summary dt { font-size: var(--text-xs); color: var(--muted); }
+.pf-modal-summary dd {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.pf-modal-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--error-bg);
+  color: var(--error-color);
+  font-size: var(--text-xs);
+}
+
+.pf-modal-foot { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.pf-modal-foot .pf-primary {
+  height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-btn);
+  background: var(--accent-solid);
+  color: var(--accent-ink);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+.pf-modal-foot .pf-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+@media (max-width: 640px) {
+  .pf-shell .form-grid.two,
+  .pf-shell .ai-fallback-picks { grid-template-columns: minmax(0, 1fr); }
+  .pf-shell .ai-setup-foot { flex-direction: column; align-items: stretch; }
+}

@@ -32,7 +32,10 @@ from app.models.schemas.organization import (
     OrganizationCreateResponse
 )
 from app.core.auth import get_current_user, require_permissions
-from app.core.security import create_access_token, create_refresh_token
+from app.core.security import (
+    create_access_token, create_refresh_token,
+    ACCESS_COOKIE_MAX_AGE, REFRESH_COOKIE_MAX_AGE, USER_INFO_COOKIE_MAX_AGE,
+)
 from app.core.logger import get_logger
 from app.models.role import Role
 from app.models.permission import Permission
@@ -184,7 +187,7 @@ async def create_organization(
             httponly=True,
             secure=True,
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=1800  # 30 minutes
+            max_age=ACCESS_COOKIE_MAX_AGE
         )
         response.set_cookie(
             key="refresh_token",
@@ -192,7 +195,7 @@ async def create_organization(
             httponly=True,
             secure=True,
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=604800  # 7 days
+            max_age=REFRESH_COOKIE_MAX_AGE
         )
 
         # Set session data with role information
@@ -208,7 +211,7 @@ async def create_organization(
             }, default=str)),
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
             secure=True,  # Required when samesite="none"
-            max_age=604800  # 7 days
+            max_age=USER_INFO_COOKIE_MAX_AGE
         )
 
         db.commit()

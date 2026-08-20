@@ -517,3 +517,84 @@ export interface AIConfigOverview {
 
 export const getAIConfiguration = async (): Promise<AIConfigOverview> =>
   (await api.get<AIConfigOverview>('/platform/ai')).data
+
+// ── Platform AI credentials ─────────────────────────────────────────────────
+//
+// The provider accounts the operator pays for, which back the managed model a
+// tenant can select instead of bringing their own key. API keys are never sent
+// back to the browser — `has_api_key` is all the console needs to know.
+
+export interface CatalogModel {
+  value: string
+  label: string
+}
+
+export interface CatalogProvider {
+  value: string
+  label: string
+  requires_api_key: boolean
+  custom_allowed: boolean
+  api_key_url: string
+  models: CatalogModel[]
+}
+
+export interface PlatformModelSection {
+  provider: string | null
+  model: string | null
+  has_api_key: boolean
+}
+
+export interface PlatformAIConfig {
+  text: PlatformModelSection
+  image: PlatformModelSection
+  fallback: { enabled: boolean; provider: string | null; model: string | null }
+  is_configured: boolean
+  supports_images: boolean
+  updated_at: string | null
+}
+
+export interface PlatformAIResponse {
+  config: PlatformAIConfig
+  providers: CatalogProvider[]
+  tenants_using_platform_model: number
+}
+
+/** `api_key` omitted means "keep the stored key" — never "clear it". */
+export interface PlatformAIPayload {
+  text: { provider: string | null; model: string | null; api_key?: string }
+  image: { provider: string | null; model: string | null; api_key?: string }
+  fallback: { enabled: boolean; provider: string | null; model: string | null }
+}
+
+export const getPlatformAIConfig = async (): Promise<PlatformAIResponse> =>
+  (await api.get<PlatformAIResponse>('/platform/ai-config')).data
+
+export const savePlatformAIConfig = async (
+  payload: PlatformAIPayload,
+): Promise<{ config: PlatformAIConfig; tenants_resynced: number; message: string }> =>
+  (await api.put('/platform/ai-config', payload)).data
+
+// ── Plan limits ─────────────────────────────────────────────────────────────
+
+/** What happens to organizations already on a plan whose terms just changed. */
+export type ApplyPolicy = 'new_subscriptions_only' | 'at_next_renewal' | 'immediately'
+
+export interface PlanTermsPayload {
+  price_cents?: number | null
+  limits?: Record<string, number | null>
+  policies?: Record<string, number | null>
+}
+
+export interface PlanLimitsPayload {
+  apply_policy: ApplyPolicy
+  plans: Record<string, PlanTermsPayload>
+}
+
+export const savePlanLimits = async (
+  payload: PlanLimitsPayload,
+): Promise<{
+  message: string
+  apply_policy: ApplyPolicy
+  tenants_affected: number
+  changes: Record<string, Record<string, [number | null, number | null]>>
+}> => (await api.put('/platform/plans/limits', payload)).data

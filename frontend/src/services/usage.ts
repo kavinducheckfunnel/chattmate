@@ -20,6 +20,7 @@ import api from '@/services/api'
 export type UsageMetric =
   | 'conversations'
   | 'ai_messages'
+  | 'image_requests'
   | 'agents'
   | 'seats'
   | 'knowledge_docs'
@@ -43,6 +44,9 @@ export interface Plan {
   is_active: boolean
   is_default: boolean
   limits: Record<UsageMetric | 'storage_mb', number | null>
+  /** Settings the operator edits beside the limits but which are not usage
+   *  ceilings — a price and a retention window are not quantities to meter. */
+  policies?: Record<string, number | null>
 }
 
 export interface UsageSummary {

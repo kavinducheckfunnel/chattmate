@@ -17,8 +17,9 @@ Usage metering and quota enforcement.
 
 Two kinds of metric, handled differently on purpose:
 
-  FLOW   conversations, ai_messages — events that accumulate within a billing
-         period. Stored in usage_counters and reset by moving to a new period.
+  FLOW   conversations, ai_messages, image_requests — events that accumulate
+         within a billing period. Stored in usage_counters and reset by moving
+         to a new period.
 
   STOCK  agents, seats, knowledge_docs — how many currently exist. Counted from
          the owning table on demand, never stored. A stored stock counter drifts
@@ -35,13 +36,45 @@ from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
 from app.models.plan import Plan
+from app.models.plan_snapshot import OrganizationPlanSnapshot
 from app.models.usage import UsageCounter, current_period
 
 logger = get_logger(__name__)
 
-FLOW_METRICS = ("conversations", "ai_messages")
+FLOW_METRICS = ("conversations", "ai_messages", "image_requests")
 STOCK_METRICS = ("agents", "seats", "knowledge_docs")
 ALL_METRICS = FLOW_METRICS + STOCK_METRICS
+
+
+def _effective_limit(db: Session, organization, plan: Optional[Plan], metric: str):
+    """The ceiling this tenant is actually held to, which is not always the plan's.
+
+    When an operator edits a plan they choose whether existing customers move
+    with it. If they chose not to, the terms this tenant keeps are recorded in a
+    snapshot, and that is what must be enforced — reading the plan directly would
+    apply the new limits to everyone regardless of what was chosen, making the
+    choice cosmetic.
+
+    A snapshot only speaks for the metrics it recorded; anything absent falls
+    through to the plan, so a later edit adding a brand-new metric still reaches
+    held-back tenants rather than leaving them unlimited.
+    """
+    snapshot = (
+        db.query(OrganizationPlanSnapshot)
+        .filter(OrganizationPlanSnapshot.organization_id == organization.id)
+        .first()
+    )
+    if (
+        snapshot is not None
+        and snapshot.is_active()
+        # Terms from a plan they have since left are not terms they agreed to.
+        and plan is not None
+        and snapshot.plan_code == plan.code
+        and metric in (snapshot.limits or {})
+    ):
+        return (snapshot.limits or {})[metric]
+
+    return plan.limit_for(metric) if plan else None
 
 
 def _resolve_plan(db: Session, organization) -> Optional[Plan]:
@@ -137,7 +170,7 @@ def summary(db: Session, organization) -> dict:
     metrics = {}
     for metric in ALL_METRICS:
         used = get_usage(db, organization.id, metric, period)
-        limit = plan.limit_for(metric) if plan else None
+        limit = _effective_limit(db, organization, plan, metric)
         metrics[metric] = {
             "used": used,
             "limit": limit,
@@ -173,7 +206,7 @@ def check(db: Session, organization, metric: str, amount: int = 1) -> None:
         )
         return
 
-    limit = plan.limit_for(metric)
+    limit = _effective_limit(db, organization, plan, metric)
     if limit is None:
         return
 

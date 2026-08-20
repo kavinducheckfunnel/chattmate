@@ -25,6 +25,8 @@ from .feature import (
 )
 from .platform_audit import PlatformAuditLog
 from .platform_metric import PlatformMetric
+from .platform_ai import PlatformAIConfig
+from .plan_snapshot import OrganizationPlanSnapshot
 from .usage import UsageCounter, current_period
 from .customer import Customer
 from .role import Role
@@ -85,6 +87,8 @@ __all__ = [
     "AuthToken",
     "TokenPurpose",
     "Plan",
+    "OrganizationPlanSnapshot",
+    "PlatformAIConfig",
     "PlatformAuditLog",
     "UsageCounter",
     "current_period",
