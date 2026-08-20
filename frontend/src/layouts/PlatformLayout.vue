@@ -48,7 +48,7 @@ const NAV: NavItem[] = [
   { to: '/platform/billing', label: 'Billing', icon: 'billing', group: 'platform' },
   { to: '/platform/analytics', label: 'Analytics', icon: 'trend', group: 'platform' },
   { to: '/platform/health', label: 'System Health', icon: 'health', group: 'system' },
-  { to: '/platform/backups', label: 'Backups', icon: 'backups', group: 'system' },
+  { to: '/platform/backups', label: 'Backups & Recovery', icon: 'backups', group: 'system' },
   { to: '/platform/audit', label: 'Audit Logs', icon: 'audit', group: 'system' },
 ]
 
@@ -225,6 +225,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <style>
 @import '@/assets/styles/platform.css';
+/* After ours, deliberately: where both define a shared class the reference wins,
+   which is the point of the port. Our own Pf* primitives use names the reference
+   does not have, so they are untouched by the ordering. */
+@import '@/assets/styles/platform-reference.css';
 </style>
 
 <style scoped>

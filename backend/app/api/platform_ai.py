@@ -130,6 +130,21 @@ async def update_platform_ai_config(
     }
 
 
+# ------------------------------------------------------------------- billing
+
+
+@router.get("/billing")
+async def platform_billing(
+    period: Optional[str] = None,
+    _: User = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+):
+    """Sales, subscriptions, usage and projected AI cost for one billing period."""
+    from app.services import platform_billing as billing_service
+
+    return billing_service.overview(db, period)
+
+
 # ------------------------------------------------------------- plan limits
 
 

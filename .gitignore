@@ -76,3 +76,6 @@ chattermate-test/chattermate.min.js
 
 # Vitest writes a timestamped temp config next to the real one during a run
 vitest.config.ts.timestamp-*.mjs
+
+# Designer's reference UI, cloned for visual parity work. Read-only, never edited.
+reference-ui/
