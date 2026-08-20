@@ -358,46 +358,72 @@ const confirmTermSave = async (policy: ApplyPolicy) => {
 
 // ── Feature matrix editing ─────────────────────────────────────────────────
 
-const editingFeatures = ref<string | null>(null)
+// The whole matrix is edited at once, as the reference does. Editing one plan at
+// a time meant an operator moving a capability up a tier had to save twice and
+// answer the apply question twice, for what is one decision.
+const editingFeatures = ref(false)
+// Keyed `${planCode}|${featureKey}` — one flat map rather than nested objects,
+// so a cell reads and writes in one place and change detection is a comparison
+// against the same key.
 const featureDraft = ref<Record<string, boolean>>({})
-const pendingSave = ref<string | null>(null)
+const featureApplyOpen = ref(false)
+const featureApplyError = ref('')
 
-const startFeatureEdit = (planCode: string) => {
-  const plan = matrix.value?.plans.find((p) => p.code === planCode)
-  if (!plan) return
-  featureDraft.value = { ...plan.features }
-  editingFeatures.value = planCode
+const startFeatureEdit = () => {
+  const next: Record<string, boolean> = {}
+  for (const plan of matrix.value?.plans ?? []) {
+    for (const f of matrix.value?.features ?? []) {
+      next[`${plan.code}|${f.key}`] = !!plan.features[f.key]
+    }
+  }
+  featureDraft.value = next
+  editingFeatures.value = true
 }
 
-const cancelFeatureEdit = () => { editingFeatures.value = null; featureDraft.value = {} }
+const cancelFeatureEdit = () => {
+  editingFeatures.value = false
+  featureDraft.value = {}
+  featureApplyError.value = ''
+}
 
-const affectedBy = computed(() => {
-  const code = pendingSave.value
-  return code ? plans.value.find((p) => p.code === code)?.tenant_count ?? 0 : 0
-})
+/** Plans whose feature set differs from what is stored. Only these are sent, so
+ *  an untouched plan is never rewritten and its audit trail stays quiet. */
+const changedPlans = computed(() =>
+  (matrix.value?.plans ?? []).filter((plan) =>
+    (matrix.value?.features ?? []).some(
+      (f) => !!plan.features[f.key] !== !!featureDraft.value[`${plan.code}|${f.key}`],
+    ),
+  ),
+)
 
-const removedFeatures = computed(() => {
-  const code = pendingSave.value
-  if (!code || !matrix.value) return []
-  const current = matrix.value.plans.find((p) => p.code === code)
-  if (!current) return []
-  return matrix.value.features
-    .filter((f) => current.features[f.key] && !featureDraft.value[f.key])
-    .map((f) => f.label)
-})
+const featuresChanged = computed(() => changedPlans.value.length > 0)
 
-const confirmFeatureSave = async () => {
-  const code = pendingSave.value
-  if (!code) return
+/** Workspaces on the plans actually being changed — what the dialog warns about. */
+const featuresAffected = computed(() =>
+  changedPlans.value.reduce(
+    (total, plan) => total + (plans.value.find((p) => p.code === plan.code)?.tenant_count ?? 0),
+    0,
+  ),
+)
+
+const confirmFeatureMatrixSave = async () => {
   busy.value = true
+  featureApplyError.value = ''
   try {
-    const result = await setPlanFeatures(code, featureDraft.value)
-    toast.success(result.message ?? 'Features saved')
-    pendingSave.value = null
+    for (const plan of changedPlans.value) {
+      const payload: Record<string, boolean> = {}
+      for (const f of matrix.value?.features ?? []) {
+        payload[f.key] = !!featureDraft.value[`${plan.code}|${f.key}`]
+      }
+      await setPlanFeatures(plan.code, payload)
+    }
+    const n = changedPlans.value.length
+    toast.success(`Features saved for ${n} plan${n === 1 ? '' : 's'}.`)
+    featureApplyOpen.value = false
     cancelFeatureEdit()
     await load()
   } catch (e) {
-    toast.error(extractApiError(e, 'Could not save the feature set'))
+    featureApplyError.value = extractApiError(e, 'Could not save the feature set')
   } finally {
     busy.value = false
   }
@@ -566,25 +592,14 @@ const unconfigured = computed(
           </div>
           <div class="toolbar-actions">
             <template v-if="editingFeatures">
-              <span class="editing-label">Editing {{ editingFeatures }}</span>
-              <button class="select-button" @click="cancelFeatureEdit">Cancel</button>
-              <button class="primary-button" @click="pendingSave = editingFeatures">
-                Review &amp; save
-              </button>
+              <button class="select-button" :disabled="busy" @click="cancelFeatureEdit">Cancel</button>
+              <button
+                class="primary-button"
+                :disabled="busy || !featuresChanged"
+                @click="featureApplyOpen = true"
+              >Save features</button>
             </template>
-            <template v-else>
-              <label class="filter-select">
-                <span>Edit</span>
-                <select
-                  :value="''"
-                  aria-label="Choose a plan to edit"
-                  @change="startFeatureEdit(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="" disabled>Choose a plan…</option>
-                  <option v-for="p in matrix.plans" :key="p.code" :value="p.code">{{ p.name }}</option>
-                </select>
-              </label>
-            </template>
+            <button v-else class="select-button" @click="startFeatureEdit()">✎ Edit features</button>
           </div>
         </div>
 
@@ -592,7 +607,7 @@ const unconfigured = computed(
           <table>
             <thead>
               <tr>
-                <th>Capability</th>
+                <th>Feature</th>
                 <th v-for="p in matrix.plans" :key="p.code">
                   {{ p.name }}
                   <span v-if="!p.configured" class="th-note">unconfigured</span>
@@ -613,22 +628,23 @@ const unconfigured = computed(
                   <td
                     v-for="p in matrix.plans"
                     :key="p.code"
-                    :class="{ 'editing-cell': editingFeatures === p.code }"
+                    :class="{ 'editing-cell': editingFeatures }"
                   >
                     <button
-                      v-if="editingFeatures === p.code"
+                      v-if="editingFeatures"
                       class="feature-access-toggle"
-                      :class="{ on: featureDraft[f.key] }"
+                      :class="{ on: featureDraft[`${p.code}|${f.key}`] }"
                       role="switch"
-                      :aria-checked="!!featureDraft[f.key]"
-                      @click="featureDraft[f.key] = !featureDraft[f.key]"
+                      :aria-checked="!!featureDraft[`${p.code}|${f.key}`]"
+                      :aria-label="`${f.label} on ${p.name}`"
+                      @click="featureDraft[`${p.code}|${f.key}`] = !featureDraft[`${p.code}|${f.key}`]"
                     >
                       <i />
-                      <span>{{ featureDraft[f.key] ? 'Included' : 'No' }}</span>
+                      <span>{{ featureDraft[`${p.code}|${f.key}`] ? 'Included' : 'No' }}</span>
                     </button>
                     <span v-else-if="!p.configured" class="feature-yes muted">✓ (unset)</span>
                     <span v-else-if="p.features[f.key]" class="feature-yes">✓ Included</span>
-                    <span v-else class="feature-no">— Not included</span>
+                    <span v-else class="feature-no">—</span>
                   </td>
                 </tr>
               </template>
@@ -723,44 +739,15 @@ const unconfigured = computed(
       />
     </div>
 
-    <!-- Feature save confirmation --------------------------------------------->
-    <div v-if="pendingSave" class="pf-overlay center" @mousedown.self="pendingSave = null">
-      <section class="pf-modal" role="dialog" aria-modal="true">
-        <div class="pf-modal-head">
-          <div>
-            <span>Applies immediately</span>
-            <h2>Save feature changes to {{ pendingSave }}?</h2>
-          </div>
-          <button class="pf-close" aria-label="Close" @click="pendingSave = null">×</button>
-        </div>
-
-        <div class="pf-modal-body">
-          <div class="note-box" :class="removedFeatures.length ? 'danger' : 'accent'">
-            <strong>
-              {{ num(affectedBy) }} workspace{{ affectedBy === 1 ? '' : 's' }} on this plan
-            </strong>
-            <span v-if="removedFeatures.length">
-              Losing access to {{ removedFeatures.join(', ') }} the moment this is
-              saved. There is no grace period — the gate reads this table on the
-              next request. Any workspace you have given an explicit override
-              keeps its exception.
-            </span>
-            <span v-else>
-              Gaining access as soon as this is saved. Nothing is being taken away.
-            </span>
-          </div>
-        </div>
-
-        <div class="pf-modal-footer">
-          <button class="select-button" @click="pendingSave = null">Back to editing</button>
-          <button
-            :class="removedFeatures.length ? 'danger-button' : 'primary-button'"
-            :disabled="busy"
-            @click="confirmFeatureSave"
-          >{{ busy ? 'Saving…' : 'Save and apply' }}</button>
-        </div>
-      </section>
-    </div>
+    <PfApplyChangesDialog
+      :open="featureApplyOpen"
+      :affected="featuresAffected"
+      change-type="Plan feature availability"
+      :saving="busy"
+      :error="featureApplyError"
+      @cancel="featureApplyOpen = false"
+      @confirm="confirmFeatureMatrixSave"
+    />
   </PfPage>
 </template>
 
