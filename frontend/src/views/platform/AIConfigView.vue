@@ -109,8 +109,14 @@ const onImageProvider = () => {
   form.value.imageModel = modelsFor(form.value.imageProvider)[0]?.value ?? ''
   form.value.imageKey = ''
 }
-const onFallbackProvider = () => {
-  form.value.fallbackModel = modelsFor(form.value.fallbackProvider)[0]?.value ?? ''
+/** The fallback select carries "PROVIDER|model" in one option, as the reference
+ *  shows a single dropdown rather than a provider/model pair. */
+const onFallbackModel = () => {
+  const [provider, model] = String(form.value.fallbackModel).split('|')
+  if (model) {
+    form.value.fallbackProvider = provider
+    form.value.fallbackModel = model
+  }
 }
 
 const keyIsSet = (section: 'text' | 'image') =>
@@ -187,10 +193,6 @@ const visible = computed(() => {
     :loading="loading"
     :error="error"
   >
-    <template #actions>
-      <button class="select-button" @click="load">Refresh</button>
-    </template>
-
     <!-- Platform model setup ------------------------------------------------->
     <section v-if="platform" class="panel ai-setup">
       <header class="ai-setup-head">
@@ -231,12 +233,20 @@ const visible = computed(() => {
 
           <label class="field">
             <span>{{ labelFor(form.textProvider) }} API key</span>
-            <input
-              v-model="form.textKey"
-              type="password"
-              autocomplete="off"
-              :placeholder="needsKey ? 'Paste the API key' : '•••••••••••••••••• (stored)'"
-            />
+            <div class="ai-key-row">
+              <input
+                v-model="form.textKey"
+                type="password"
+                autocomplete="off"
+                :placeholder="needsKey ? 'Paste the API key' : '••••••••••••••••••'"
+              />
+              <button
+                class="select-button"
+                type="button"
+                :disabled="!form.textKey.trim() || saving"
+                @click="save"
+              >Update key</button>
+            </div>
             <small class="field-hint">
               Stored encrypted and never shown again — a masked key would still
               reveal which account is in use.
@@ -273,12 +283,20 @@ const visible = computed(() => {
 
           <label v-if="form.imageProvider" class="field">
             <span>{{ labelFor(form.imageProvider) }} API key</span>
-            <input
-              v-model="form.imageKey"
-              type="password"
-              autocomplete="off"
-              :placeholder="keyIsSet('image') ? '•••••••••••••••••• (stored)' : 'Paste the API key'"
-            />
+            <div class="ai-key-row">
+              <input
+                v-model="form.imageKey"
+                type="password"
+                autocomplete="off"
+                :placeholder="keyIsSet('image') ? '••••••••••••••••••' : 'Paste the API key'"
+              />
+              <button
+                class="select-button"
+                type="button"
+                :disabled="!form.imageKey.trim() || saving"
+                @click="save"
+              >Update key</button>
+            </div>
             <small class="field-hint">
               This model answers the image allowance sold on paid plans.
             </small>
@@ -293,39 +311,41 @@ const visible = computed(() => {
           <h3>Fallback</h3>
           <p class="section-sub">Use another model automatically if the main text model is unavailable.</p>
 
+          <!-- One row: switch, its label, and the model it selects. The switch
+               is a button carrying .config-toggle, which the reference styles as
+               the 34px control itself — putting that class on a label wrapping
+               text squeezed the whole label to 34px and stacked it one word per
+               line. -->
           <div class="ai-fallback">
-            <label class="config-toggle">
-              <input v-model="form.fallbackEnabled" type="checkbox" />
-              <span>
-                <strong>Enable fallback model</strong>
-                <small>Keeps customer conversations running during a provider outage.</small>
-              </span>
-            </label>
+            <button
+              type="button"
+              class="config-toggle"
+              role="switch"
+              :aria-checked="form.fallbackEnabled"
+              aria-label="Enable fallback model"
+              :class="{ on: form.fallbackEnabled }"
+              @click="form.fallbackEnabled = !form.fallbackEnabled"
+            ><i /></button>
 
-            <div v-if="form.fallbackEnabled" class="ai-fallback-picks">
-              <label class="field">
-                <span>Provider</span>
-                <select v-model="form.fallbackProvider" @change="onFallbackProvider">
-                  <option value="">Select…</option>
-                  <option v-for="p in fallbackProviders" :key="p.value" :value="p.value">
-                    {{ p.label }}
-                  </option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Model</span>
-                <select v-model="form.fallbackModel" :disabled="!form.fallbackProvider">
-                  <option value="">Select…</option>
-                  <option
-                    v-for="m in modelsFor(form.fallbackProvider)"
-                    :key="m.value"
-                    :value="m.value"
-                  >
-                    {{ m.label }}
-                  </option>
-                </select>
-              </label>
-            </div>
+            <span class="ai-fallback-text">
+              <strong>Enable fallback model</strong>
+              <small>Keeps customer conversations running during a provider outage.</small>
+            </span>
+
+            <select
+              v-model="form.fallbackModel"
+              class="ai-fallback-model"
+              aria-label="Fallback model"
+              :disabled="!form.fallbackEnabled"
+              @change="onFallbackModel"
+            >
+              <option value="">Select a model…</option>
+              <optgroup v-for="p in fallbackProviders" :key="p.value" :label="p.label">
+                <option v-for="m in p.models" :key="m.value" :value="`${p.value}|${m.value}`">
+                  {{ m.label }}
+                </option>
+              </optgroup>
+            </select>
           </div>
 
           <p v-if="form.fallbackEnabled && !fallbackProviders.length" class="pf-banner warn">
@@ -363,113 +383,5 @@ const visible = computed(() => {
       </footer>
     </section>
 
-    <!-- Workspace overview --------------------------------------------------->
-    <template v-if="data">
-      <section class="metrics-grid">
-        <PfMetric
-          label="Workspaces with a model"
-          :value="num(data.workspaces.length)"
-          :delta="`of ${num(totalWorkspaces)} total`"
-          icon="aiconfig"
-        />
-        <PfMetric
-          label="Active configurations"
-          :value="num(activeCount)"
-          :delta="activeCount === data.workspaces.length ? 'All enabled' : `${data.workspaces.length - activeCount} disabled`"
-          :delta-tone="activeCount === data.workspaces.length ? 'success' : 'warning'"
-          icon="check"
-          tone="teal"
-        />
-        <PfMetric
-          label="On the platform model"
-          :value="num(platform?.tenants_using_platform_model ?? 0)"
-          delta="Billed to the platform"
-          icon="aiconfig"
-          tone="purple"
-        />
-        <PfMetric
-          label="Distinct models"
-          :value="num(data.by_model.length)"
-          delta="Across all workspaces"
-          icon="chart"
-        />
-      </section>
-
-      <section class="panel table-panel">
-        <div class="table-toolbar">
-          <div>
-            <h2 class="section-title">Workspace models</h2>
-            <p class="section-sub">Which model each workspace answers with today.</p>
-          </div>
-          <input v-model="search" class="filter-select" placeholder="Search workspaces…" />
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Workspace</th>
-                <th>Plan</th>
-                <th>Provider</th>
-                <th>Model</th>
-                <th>Status</th>
-                <th>Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="w in visible" :key="w.organization_id">
-                <td>
-                  <div class="cell-identity">
-                    <span class="avatar">{{ initials(w.organization_name) }}</span>
-                    <div>
-                      <strong>{{ w.organization_name }}</strong>
-                      <small>{{ w.domain }}</small>
-                    </div>
-                  </div>
-                </td>
-                <td>{{ w.plan_code ?? '—' }}</td>
-                <td>{{ w.model_type ?? '—' }}</td>
-                <td>{{ w.model_name }}</td>
-                <td>
-                  <PfPill :tone="w.is_active ? 'success' : 'neutral'">
-                    {{ w.is_active ? 'Active' : 'Disabled' }}
-                  </PfPill>
-                </td>
-                <td>{{ date(w.updated_at) }}</td>
-              </tr>
-              <tr v-if="!visible.length">
-                <td colspan="6" class="empty-table-state">No workspaces match that search.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section v-if="data.unconfigured.length" class="panel table-panel">
-        <div class="table-toolbar">
-          <div>
-            <h2 class="section-title">No model configured</h2>
-            <p class="section-sub">
-              These workspaces cannot answer a customer at all — the usual reason
-              an agent appears silent.
-            </p>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Workspace</th><th>Domain</th><th>Plan</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="u in data.unconfigured" :key="u.organization_id">
-                <td><strong>{{ u.organization_name }}</strong></td>
-                <td>{{ u.domain }}</td>
-                <td>{{ u.plan_code ?? '—' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </template>
   </PfPage>
 </template>

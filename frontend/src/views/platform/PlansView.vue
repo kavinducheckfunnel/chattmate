@@ -585,9 +585,7 @@ const unconfigured = computed(
           <div>
             <h2 class="section-title">Complete feature availability</h2>
             <p class="section-sub">
-              Every customer-facing capability included in each plan. Each switch
-              is enforced by real code — the path is named under each capability,
-              so nothing in this table is decorative.
+              Every customer-facing capability included in each plan.
             </p>
           </div>
           <div class="toolbar-actions">
@@ -616,14 +614,15 @@ const unconfigured = computed(
             </thead>
             <tbody>
               <template v-for="[category, list] in featureGroups" :key="category">
-                <tr class="group-row">
-                  <td :colspan="matrix.plans.length + 1"><span class="feature-category">{{ category }}</span></td>
-                </tr>
                 <tr v-for="f in list" :key="f.key">
-                  <td>
+                  <!-- Name only. The description and enforcement path used to sit
+                       here too, which widened this column until the plan columns
+                       were pushed outside the scrolling wrapper and the table
+                       read as a single FEATURE list. Both moved to the row's
+                       title, so they are still available on hover without
+                       costing the layout. -->
+                  <td :title="`${f.description} — enforced at ${f.enforced_at}`">
                     <strong>{{ f.label }}</strong>
-                    <small class="table-subtext">{{ f.description }}</small>
-                    <code class="enforced">{{ f.enforced_at }}</code>
                   </td>
                   <td
                     v-for="p in matrix.plans"

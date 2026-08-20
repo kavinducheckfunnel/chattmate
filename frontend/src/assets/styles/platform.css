@@ -1812,3 +1812,20 @@ own palette.
 }
 .pf-modal-foot .select-button:hover:not(:disabled) { background: var(--o08); }
 .pf-modal-foot .select-button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* AI config: key field with its Update button, and the fallback row.
+   .config-toggle is the reference's 34px switch itself, so the label and the
+   model select are siblings of it rather than wrapping it. */
+.pf-shell .ai-key-row { display: flex; gap: 10px; align-items: center; }
+.pf-shell .ai-key-row input { flex: 1; min-width: 0; }
+.pf-shell .ai-key-row .select-button { flex: 0 0 auto; height: 40px; }
+
+.pf-shell .ai-fallback { flex-direction: row; align-items: center; gap: 14px; }
+.pf-shell .ai-fallback-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.pf-shell .ai-fallback-text strong { font-size: var(--text-sm); }
+.pf-shell .ai-fallback-text small { color: var(--muted); font-size: var(--text-xs); }
+.pf-shell .ai-fallback-model { flex: 0 0 auto; width: min(280px, 45%); height: 40px; }
+@media (max-width: 720px) {
+  .pf-shell .ai-fallback { flex-wrap: wrap; }
+  .pf-shell .ai-fallback-model { width: 100%; }
+}
