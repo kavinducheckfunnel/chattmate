@@ -93,9 +93,34 @@ def test_missing_app_secret_is_reported(monkeypatch, configured):
     ("any_random_string_you_choose", True),
     ("changeme", True),
     ("REPLACE_ME_NOW", True),
+    # Reached production and was reported as correctly configured, because the
+    # check was a prefix denylist and this prefix was not on it.
+    ("PASTE_YOUR_APP_SECRET_HERE", True),
+    ("YOUR_APP_SECRET", True),
     ("b7f2c1a9d4e6", False),
     # A real secret that merely starts with similar letters must not be flagged.
     ("yourealsecret123", False),
+    # Real secrets are lowercase hex; neither of these is instruction-shaped.
+    ("0123456789abcdef0123456789abcdef", False),
+    ("A1B2C3D4E5F60718293A4B5C6D7E8F90", False),
 ])
 def test_placeholder_detection(value, expected):
     assert _is_placeholder(value) is expected
+
+
+def test_app_secret_of_the_wrong_shape_is_reported(monkeypatch, configured):
+    """A truncated or mistyped secret fails silently at signature-check time.
+
+    Meta issues exactly 32 hex characters, so the shape is checkable — and
+    checking it catches a bad paste that no list of known placeholder words
+    ever would.
+    """
+    monkeypatch.setattr(configured, "META_APP_SECRET", "abc123", raising=False)
+    problems = _webhook_setup_problems("https://chat.example.com")
+    assert any("32 hexadecimal" in p for p in problems)
+
+
+def test_a_correctly_shaped_secret_passes(monkeypatch, configured):
+    monkeypatch.setattr(configured, "META_APP_SECRET",
+                        "0123456789abcdef0123456789abcdef", raising=False)
+    assert _webhook_setup_problems("https://chat.example.com") == []

@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 import json
+import re
 import secrets
 import time
 from urllib.parse import urlparse
@@ -343,13 +344,28 @@ async def get_embedded_signup_config(
 # refuses non-HTTPS URLs outright.
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
 
-# Shipped in .env.example. A deployment still carrying one has never configured
-# that value, however non-empty it looks.
-_PLACEHOLDER_PREFIXES = ("your_", "any_", "changeme", "replace_me")
+# Shipped in .env.example, or pasted from setup instructions. A deployment still
+# carrying one has never configured that value, however non-empty it looks.
+_PLACEHOLDER_PREFIXES = ("your_", "any_", "changeme", "replace_me", "paste_", "example_")
+
+# SCREAMING_SNAKE with no digits is what instructions look like, not what secrets
+# look like. Prefix matching alone missed PASTE_YOUR_APP_SECRET_HERE long enough
+# for it to reach production and be reported as correctly configured.
+_INSTRUCTION_SHAPE = re.compile(r"^[A-Z][A-Z_]{7,}$")
 
 
 def _is_placeholder(value: str) -> bool:
-    return value.lower().startswith(_PLACEHOLDER_PREFIXES)
+    if not value:
+        return False
+    if value.lower().startswith(_PLACEHOLDER_PREFIXES):
+        return True
+    return bool(_INSTRUCTION_SHAPE.fullmatch(value))
+
+
+# Meta issues app secrets as exactly 32 hexadecimal characters. Checking the
+# shape catches a truncated paste or a stray instruction that no denylist of
+# known placeholder words ever will.
+_APP_SECRET_SHAPE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
 
 def _webhook_setup_problems(base: str) -> list[str]:
@@ -385,12 +401,19 @@ def _webhook_setup_problems(base: str) -> list[str]:
             "random secret."
         )
 
-    # Without the app secret every delivery fails its signature check, so the
-    # handshake can succeed and not one message will ever arrive.
-    if not settings.META_APP_SECRET or _is_placeholder(settings.META_APP_SECRET):
+    # Without a *valid* app secret every delivery fails its signature check, so
+    # the handshake can succeed and not one message will ever arrive.
+    secret = settings.META_APP_SECRET or ""
+    if not secret or _is_placeholder(secret):
         problems.append(
             "META_APP_SECRET is not configured, so incoming messages cannot be verified and "
             "will all be rejected. Copy it from your Meta app under Settings → Basic."
+        )
+    elif not _APP_SECRET_SHAPE.fullmatch(secret):
+        problems.append(
+            f"META_APP_SECRET does not look like a Meta app secret ({len(secret)} characters; "
+            "Meta issues exactly 32 hexadecimal ones). Incoming messages will fail their "
+            "signature check. Re-copy it from your Meta app under Settings → Basic."
         )
 
     return problems
