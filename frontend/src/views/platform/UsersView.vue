@@ -45,6 +45,7 @@ const tenants = ref<TenantRow[]>([])
 const search = ref('')
 const orgFilter = ref('')
 const statusFilter = ref('all')
+const roleFilter = ref('all')
 
 const PAGE_SIZE = 25
 const page = ref(1)
@@ -100,11 +101,37 @@ watch([orgFilter, statusFilter], () => { page.value = 1; load() })
 watch(page, load)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
-const hasFilters = computed(() => !!search.value || !!orgFilter.value || statusFilter.value !== 'all')
+/** Every role present in the loaded users, so the filter offers only roles that
+ *  can actually match something rather than a fixed list this deployment may
+ *  not use. */
+const visibleUsers = computed(() =>
+  roleFilter.value === 'all'
+    ? users.value
+    : users.value.filter((u) => u.role === roleFilter.value),
+)
+
+/** What the "Last active" column can honestly show.
+ *
+ * Not every deployment records a last-login timestamp; where it is absent the
+ * cell says so rather than quietly showing the join date under a heading that
+ * means something else. */
+const lastActive = (u: PlatformUser) => {
+  const stamp = (u as unknown as Record<string, string | null>).last_login
+  return stamp ? date(stamp) : 'Not recorded'
+}
+
+const roleNames = computed(() =>
+  [...new Set((users.value ?? []).map((u) => u.role).filter(Boolean) as string[])].sort(),
+)
+
+const hasFilters = computed(
+  () => !!search.value || !!orgFilter.value || statusFilter.value !== 'all' || roleFilter.value !== 'all',
+)
 const clearFilters = () => {
   search.value = ''
   orgFilter.value = ''
   statusFilter.value = 'all'
+  roleFilter.value = 'all'
   page.value = 1
 }
 
@@ -262,21 +289,24 @@ const submitRemove = async () => {
     :loading="loading"
     :error="error"
   >
-    <template #actions>
-      <button class="primary-button" @click="openCreate">＋ Add user</button>
-    </template>
-
     <section class="panel table-panel" @click="roleMenu = null">
       <div class="table-toolbar">
         <label class="search-box">
           <span>⌕</span>
-          <input v-model="search" placeholder="Search name or email…" />
+          <input v-model="search" placeholder="Search users, email or organization…" />
         </label>
         <div class="toolbar-actions">
           <label class="filter-select">
-            <span>Workspace</span>
-            <select v-model="orgFilter" aria-label="Filter by workspace">
-              <option value="">All workspaces</option>
+            <span>Role</span>
+            <select v-model="roleFilter" aria-label="Filter users by role">
+              <option value="all">All roles</option>
+              <option v-for="r in roleNames" :key="r" :value="r">{{ r }}</option>
+            </select>
+          </label>
+          <label class="filter-select users-organization-filter">
+            <span>Organization</span>
+            <select v-model="orgFilter" aria-label="Filter users by organization">
+              <option value="">All organizations</option>
               <option v-for="t in tenants" :key="t.id" :value="t.id">{{ t.name }}</option>
             </select>
           </label>
@@ -291,6 +321,7 @@ const submitRemove = async () => {
           <button v-if="hasFilters" class="clear-filter-button" @click="clearFilters">
             Clear filters
           </button>
+          <button class="primary-button" @click="openCreate">＋ Add user</button>
         </div>
       </div>
 
@@ -299,15 +330,15 @@ const submitRemove = async () => {
           <thead>
             <tr>
               <th>User</th>
-              <th>Workspace</th>
+              <th>Organization</th>
               <th>Role</th>
               <th>Status</th>
-              <th>Joined</th>
+              <th>Last active</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            <tr v-for="u in users" :key="u.id">
+            <tr v-for="u in visibleUsers" :key="u.id">
               <td>
                 <div class="org-cell">
                   <span class="user-avatar">{{ initials(u.full_name || u.email) }}</span>
@@ -351,7 +382,7 @@ const submitRemove = async () => {
                 </PfPill>
                 <PfPill v-if="!u.is_email_verified" tone="warning">Unverified</PfPill>
               </td>
-              <td>{{ date(u.created_at) }}</td>
+              <td>{{ lastActive(u) }}</td>
               <td class="row-actions">
                 <template v-if="u.is_platform_admin">
                   <span class="operator-note">Managed on the server</span>
