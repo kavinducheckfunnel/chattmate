@@ -127,7 +127,7 @@ const editingLimits = ref<string | null>(null)
 // Strings, not numbers: an empty field must be distinguishable from 0, because
 // blank means "unlimited" and 0 means "none allowed" — genuinely different
 // statements, and a numeric input collapses them.
-const draft = ref<Record<string, string>>({})
+const draft = ref<Record<string, string | number>>({})
 
 const startEdit = (plan: PlatformPlan) => {
   draft.value = {
@@ -162,22 +162,21 @@ const saveLimits = async (plan: PlatformPlan, policy: ApplyPolicy) => {
     // are the part the apply policy governs, so they go through the endpoint
     // that understands it.
     await updatePlan(plan.code, {
-      name: draft.value.name.trim(),
-      description: draft.value.description.trim() || null,
+      name: String(draft.value.name ?? '').trim(),
+      description: String(draft.value.description ?? '').trim() || null,
     })
 
     const limits: Record<string, number | null> = {}
     for (const f of LIMIT_FIELDS) {
-      const raw = (draft.value[f.key] ?? '').trim()
       // Explicit null tells the server "unlimited"; omitting the key would
       // instead mean "leave unchanged", which is not what a cleared field says.
-      limits[f.metric] = raw === '' ? null : Number(raw)
+      limits[f.metric] = toFieldNumber(draft.value[f.key])
     }
     const result = await savePlanLimits({
       apply_policy: policy,
       plans: {
         [plan.code]: {
-          price_cents: Math.round(parseFloat(draft.value.price || '0') * 100),
+          price_cents: Math.round((toFieldNumber(draft.value.price) ?? 0) * 100),
           limits,
         },
       },
@@ -205,7 +204,7 @@ const editingTerms = ref(false)
 // Keyed `${planCode}|${rowId}`. Strings again, because a cleared field ("no
 // ceiling") and a zero ("none allowed") are different answers that a number
 // input would flatten into the same one.
-const termDraft = ref<Record<string, string>>({})
+const termDraft = ref<Record<string, string | number>>({})
 const applyOpen = ref(false)
 const applyError = ref('')
 
@@ -233,12 +232,30 @@ const cancelTermEdit = () => {
   applyError.value = ''
 }
 
-/** Back to storage units, with '' meaning null rather than 0. */
-const parseTerm = (raw: string, row: TermRow): number | null => {
-  const text = (raw ?? '').trim()
+/**
+ * A field's value as a number, or null for "no ceiling".
+ *
+ * Accepts string *or* number because it receives both: these drafts start as
+ * strings, but Vue applies the `.number` modifier automatically to
+ * `<input type="number">`, so the moment anyone types the entry becomes a
+ * number. Calling .trim() on it threw inside a computed, which took the whole
+ * view down — the page went black on the first keystroke in a price field.
+ *
+ * Empty is checked before Number(), because Number('') is 0 and blank means
+ * unlimited, not none.
+ */
+const toFieldNumber = (raw: string | number | null | undefined): number | null => {
+  if (raw === null || raw === undefined) return null
+  const text = String(raw).trim()
   if (text === '') return null
   const value = Number(text)
-  if (Number.isNaN(value)) return null
+  return Number.isNaN(value) ? null : value
+}
+
+/** Back to storage units, with an empty field meaning null rather than 0. */
+const parseTerm = (raw: string | number | null | undefined, row: TermRow): number | null => {
+  const value = toFieldNumber(raw)
+  if (value === null) return null
   return row.kind === 'price' || (row.kind === 'policy' && row.money)
     ? Math.round(value * 100)
     : Math.round(value)
