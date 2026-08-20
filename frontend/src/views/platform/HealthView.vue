@@ -66,7 +66,7 @@ const uptimeText = computed(() => {
 
 const headline = computed(() => {
   const s = data.value?.status
-  if (s === 'operational') return 'All systems operational'
+  if (s === 'operational') return 'All core systems operational'
   if (s === 'degraded') return 'Some services are degraded'
   return 'Services are down'
 })
@@ -118,7 +118,7 @@ const downCount = computed(
             <span class="service-dot" :class="s.status" />
             <h3>{{ s.name }}</h3>
             <PfPill :tone="s.status === 'operational' ? 'success' : 'danger'">
-              {{ s.status === 'operational' ? 'OK' : 'Down' }}
+              {{ s.status === 'operational' ? 'Operational' : 'Down' }}
             </PfPill>
           </div>
           <p class="service-detail">{{ s.detail }}</p>
@@ -134,7 +134,7 @@ const downCount = computed(
       <section class="panel">
         <div class="panel-heading">
           <div>
-            <h2>Platform totals</h2>
+            <h2>Recent incidents</h2>
             <p>Row counts across every workspace, at this moment</p>
           </div>
         </div>
