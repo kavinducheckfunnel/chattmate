@@ -159,6 +159,20 @@ const changePlan = async (code: string) => {
  * they are working in, and closing the tab is the whole exit path — there is no
  * "leave support mode" state to get stuck in.
  */
+/** The workspace owner. The earliest member is the one who created it, which is
+ *  the closest thing to an owner this schema records. */
+const owner = computed(() => {
+  const users = [...(tenant.value?.users ?? [])]
+  users.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''))
+  return users[0] ?? null
+})
+const ownerName = computed(() => owner.value?.full_name || 'No owner yet')
+const ownerEmail = computed(() => owner.value?.email || 'No members in this workspace')
+
+/** Opens the subscription manager. Previously this switched to the Usage tab,
+ *  which is not what the label promises. */
+const subscriptionOpen = ref(false)
+
 const planPriceLabel = computed(() => {
   if (!plan.value) return 'No plan assigned'
   return plan.value.price_cents
@@ -401,15 +415,15 @@ const openSession = ref<string | null>(null)
           <div v-if="tabError" class="pf-banner error">{{ tabError }}</div>
 
           <!-- Overview ------------------------------------------------------>
-          <div v-if="tab === 'overview'">
-            <h3>Workspace information</h3>
+          <div v-if="tab === 'overview'" class="info-section">
+            <h3>Organization information</h3>
             <div class="info-grid">
               <label>Organization<strong>{{ tenant.name }}</strong><small>{{ tenant.domain }}</small></label>
               <label>Status<strong>{{ tenant.is_active ? 'Active' : 'Suspended' }}</strong><small>Created {{ date(tenant.created_at) }}</small></label>
-              <label>Plan<strong>{{ plan?.name || 'No plan' }}</strong><small>{{ plan ? (plan.price_cents ? `${money(priceMonthly)} / month` : 'Free forever') : 'Quotas fall back to the default' }}</small></label>
-              <label>Time zone<strong>{{ tenant.timezone }}</strong><small>Used for business hours</small></label>
-              <label>Team<strong>{{ num(tenant.users.length) }}</strong><small>{{ tenant.users.filter((u) => u.is_active).length }} active</small></label>
-              <label>AI agents<strong>{{ num(agents.length) }}</strong><small>{{ agents.filter((a) => a.is_active).length }} live</small></label>
+              <label>Owner<strong>{{ ownerName }}</strong><small>{{ ownerEmail }}</small></label>
+              <label>Current plan<strong>{{ plan?.name || 'No plan' }}</strong><small>{{ plan ? (plan.price_cents ? `${money(priceMonthly)} / month` : 'Free forever') : 'Quotas fall back to the default' }}</small></label>
+              <label>Region<strong>{{ tenant.timezone }}</strong><small>Used for business hours</small></label>
+              <label>Renewal date<strong>{{ renewalLabel }}</strong><small>{{ plan?.price_cents ? 'Automatic renewal' : 'Free plan' }}</small></label>
             </div>
 
             <div class="section-divider" />
@@ -469,19 +483,19 @@ const openSession = ref<string | null>(null)
           </div>
 
           <!-- Members ------------------------------------------------------->
-          <div v-else-if="tab === 'members'">
+          <div v-else-if="tab === 'members'" class="org-tab-content">
             <div class="tab-content-head">
               <div>
-                <h3>Team members</h3>
-                <p>Everyone who can sign in to this workspace.</p>
+                <h3>Members</h3>
+                <p>People who can access this organization workspace.</p>
               </div>
-              <RouterLink to="/platform/users" class="select-button">Add a member →</RouterLink>
+              <RouterLink to="/platform/users" class="primary-button">＋ Invite member</RouterLink>
             </div>
 
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Member</th><th>Role</th><th>Status</th><th>Joined</th><th /></tr>
+                  <tr><th>Member</th><th>Role</th><th>Status</th><th>Last active</th><th /></tr>
                 </thead>
                 <tbody>
                   <tr v-for="u in tenant.users" :key="u.id">
@@ -532,7 +546,7 @@ const openSession = ref<string | null>(null)
           </div>
 
           <!-- Conversations ------------------------------------------------->
-          <div v-else-if="tab === 'conversations'">
+          <div v-else-if="tab === 'conversations'" class="org-tab-content organization-chats">
             <div class="tab-content-head">
               <div>
                 <h3>Conversations</h3>
@@ -577,7 +591,7 @@ const openSession = ref<string | null>(null)
           </div>
 
           <!-- Features ------------------------------------------------------>
-          <div v-else-if="tab === 'features'">
+          <div v-else-if="tab === 'features'" class="org-tab-content organization-features">
             <div class="tab-content-head">
               <div>
                 <h3>Feature access</h3>
@@ -634,7 +648,7 @@ const openSession = ref<string | null>(null)
           </div>
 
           <!-- Usage --------------------------------------------------------->
-          <div v-else-if="tab === 'usage'">
+          <div v-else-if="tab === 'usage'" class="org-tab-content">
             <div class="tab-content-head">
               <div>
                 <h3>Usage against plan limits</h3>
@@ -674,7 +688,7 @@ const openSession = ref<string | null>(null)
           </div>
 
           <!-- Knowledge ----------------------------------------------------->
-          <div v-else-if="tab === 'knowledge'">
+          <div v-else-if="tab === 'knowledge'" class="org-tab-content">
             <div class="tab-content-head">
               <div>
                 <h3>Knowledge sources</h3>
@@ -700,7 +714,7 @@ const openSession = ref<string | null>(null)
           </div>
 
           <!-- Integrations -------------------------------------------------->
-          <div v-else-if="tab === 'integrations'">
+          <div v-else-if="tab === 'integrations'" class="org-tab-content">
             <div class="tab-content-head">
               <div>
                 <h3>Channels &amp; widgets</h3>
@@ -750,16 +764,16 @@ const openSession = ref<string | null>(null)
           </div>
 
           <!-- Audit --------------------------------------------------------->
-          <div v-else-if="tab === 'billing'">
-            <div class="panel-heading">
+          <div v-else-if="tab === 'billing'" class="org-tab-content">
+            <div class="tab-content-head">
               <div>
-                <h2>Subscription &amp; billing</h2>
+                <h3>Subscription &amp; billing</h3>
                 <p>Plan, add-on messages, payment method and invoice history for this organization.</p>
               </div>
-              <button class="select-button" @click="tab = 'usage'">Manage subscription</button>
+              <button class="select-button" @click="subscriptionOpen = true">Manage subscription</button>
             </div>
 
-            <section class="metrics-grid three">
+            <section class="billing-detail-cards">
               <article class="panel soft">
                 <span class="field-label">Current plan</span>
                 <strong class="billing-figure">{{ plan?.name ?? 'No plan' }}</strong>
@@ -789,7 +803,7 @@ const openSession = ref<string | null>(null)
             </div>
           </div>
 
-          <div v-else-if="tab === 'audit'">
+          <div v-else-if="tab === 'audit'" class="org-tab-content">
             <div class="tab-content-head">
               <div>
                 <h3>Operator actions on this workspace</h3>
@@ -892,6 +906,57 @@ const openSession = ref<string | null>(null)
             </div>
           </section>
         </aside>
+
+        <!-- Manage subscription. Plan changes go through the same endpoint the
+             plan selector uses, so there is one path that can move a tenant. -->
+        <div
+          v-if="subscriptionOpen"
+          class="pf-modal-backdrop"
+          @click.self="subscriptionOpen = false"
+        >
+          <div class="pf-modal" role="dialog" aria-modal="true" aria-labelledby="sub-title">
+            <header class="pf-modal-head">
+              <div>
+                <span class="field-label">{{ tenant.name }}</span>
+                <h2 id="sub-title">Manage subscription</h2>
+                <p>Select the plan assigned to this organization.</p>
+              </div>
+              <button class="pf-modal-close" aria-label="Close" @click="subscriptionOpen = false">×</button>
+            </header>
+
+            <div class="pf-modal-body">
+              <label
+                v-for="p in plans"
+                :key="p.code"
+                class="pf-choice"
+                :class="{ 'pf-choice-active': p.code === tenant.plan_code }"
+              >
+                <input
+                  type="radio"
+                  name="sub-plan"
+                  :value="p.code"
+                  :checked="p.code === tenant.plan_code"
+                  @change="changePlan(p.code); subscriptionOpen = false"
+                />
+                <span class="pf-choice-text">
+                  <span class="pf-choice-title">
+                    {{ p.name }}
+                    <span v-if="p.code === tenant.plan_code" class="pf-choice-badge">Current</span>
+                  </span>
+                  <span class="pf-choice-detail">
+                    {{ p.price_cents ? `$${(p.price_cents / 100).toFixed(0)}/month` : '$0 forever' }}
+                    ·
+                    {{ p.limits?.ai_messages === null ? 'unlimited messages' : `${num(p.limits?.ai_messages ?? 0)} messages` }}
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <footer class="pf-modal-foot">
+              <button class="select-button" @click="subscriptionOpen = false">Cancel</button>
+            </footer>
+          </div>
+        </div>
       </div>
 
       <TranscriptModal
