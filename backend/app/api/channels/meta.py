@@ -18,6 +18,7 @@ import json
 import re
 import secrets
 import time
+from typing import Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -288,6 +289,36 @@ async def _signup_user_token(request: MessengerSignupRequest) -> str:
     return user_token
 
 
+_APP_SECRET_SHAPE_STRICT = re.compile(r"[0-9a-fA-F]{32}")
+
+
+def _clean_app_secret(value: Optional[str]) -> Optional[str]:
+    """Validate a customer-supplied Meta app secret, or reject it now.
+
+    Shape-checked at connect time on purpose. An app secret is only ever used
+    later, on an inbound webhook, where a wrong one is indistinguishable from a
+    misconfigured callback: the connection succeeds, Meta reports the
+    subscription as active, and messages are silently dropped. Catching it while
+    the customer is still looking at the field they pasted into is the
+    difference between a typo and a support ticket.
+    """
+    if value is None:
+        return None
+    secret = value.strip()
+    if not secret:
+        return None
+    if _is_placeholder(secret):
+        raise HTTPException(status_code=400, detail=(
+            "That looks like placeholder text rather than an app secret. Copy the "
+            "real value from your Meta app under Settings \u2192 Basic."))
+    if not _APP_SECRET_SHAPE_STRICT.fullmatch(secret):
+        raise HTTPException(status_code=400, detail=(
+            f"That does not look like a Meta app secret ({len(secret)} characters; "
+            "Meta issues exactly 32 hexadecimal ones). Find it in your Meta app "
+            "under Settings \u2192 Basic, next to App Secret."))
+    return secret
+
+
 def _upsert_account(db: Session, organization: Organization, channel_type: str,
                     external_account_id: str, credentials: dict, display_name: str):
     """Create the account or refresh credentials on reconnect (same org only)."""
@@ -401,19 +432,23 @@ def _webhook_setup_problems(base: str) -> list[str]:
             "random secret."
         )
 
-    # Without a *valid* app secret every delivery fails its signature check, so
-    # the handshake can succeed and not one message will ever arrive.
+    # An unusable server-wide secret is no longer fatal — the connect form takes
+    # a per-account one, which is the normal case for a customer using their own
+    # Meta app. It is still worth saying, because leaving that field blank *and*
+    # having no server secret produces a channel that verifies and then silently
+    # rejects every delivery.
     secret = settings.META_APP_SECRET or ""
     if not secret or _is_placeholder(secret):
         problems.append(
-            "META_APP_SECRET is not configured, so incoming messages cannot be verified and "
-            "will all be rejected. Copy it from your Meta app under Settings → Basic."
+            "This server has no shared Meta app secret, so you must enter the App secret "
+            "from your own Meta app below (Settings → Basic). Without it, incoming "
+            "messages cannot be verified and will all be rejected."
         )
     elif not _APP_SECRET_SHAPE.fullmatch(secret):
         problems.append(
-            f"META_APP_SECRET does not look like a Meta app secret ({len(secret)} characters; "
-            "Meta issues exactly 32 hexadecimal ones). Incoming messages will fail their "
-            "signature check. Re-copy it from your Meta app under Settings → Basic."
+            f"The server's shared Meta app secret does not look valid ({len(secret)} "
+            "characters; Meta issues exactly 32 hexadecimal ones). Enter the App secret "
+            "from your own Meta app below so this account does not depend on it."
         )
 
     return problems
@@ -476,7 +511,8 @@ async def connect_whatsapp(
     account = _upsert_account(
         db, organization, ChannelType.WHATSAPP.value,
         external_account_id=request.phone_number_id,
-        credentials={"access_token": request.access_token, "waba_id": request.waba_id},
+        credentials={"access_token": request.access_token, "waba_id": request.waba_id,
+                     "app_secret": _clean_app_secret(request.app_secret)},
         display_name=display,
     )
     # Route WABA events to our webhook (best-effort; needs the WABA id)
@@ -554,7 +590,10 @@ async def connect_messenger(
     # Inspect the token rather than reading the Page node: `me?fields=id,name`
     # needs pages_read_engagement, which a messaging token has no reason to
     # carry — it would reject a token that sends perfectly well.
-    ok, info = await debug_token(request.page_access_token)
+    app_secret = _clean_app_secret(request.app_secret)
+    ok, info = await debug_token(request.page_access_token,
+                                 app_id=(request.app_id or "").strip() or None,
+                                 app_secret=app_secret)
     if not ok or not info.get("is_valid"):
         raise HTTPException(status_code=400, detail=graph_detail(
             info, "That token is not valid — generate a fresh Page access token"))
@@ -573,7 +612,9 @@ async def connect_messenger(
     account = _upsert_account(
         db, organization, ChannelType.MESSENGER.value,
         external_account_id=request.page_id,
-        credentials={"access_token": request.page_access_token},
+        credentials={"access_token": request.page_access_token,
+                      "app_id": (request.app_id or "").strip() or None,
+                      "app_secret": app_secret},
         display_name=display_name,
     )
     if not await subscribe_app(request.page_id, request.page_access_token,
@@ -721,7 +762,8 @@ async def connect_instagram(
     account = _upsert_account(
         db, organization, ChannelType.INSTAGRAM.value,
         external_account_id=request.ig_id,
-        credentials={"access_token": request.page_access_token},
+        credentials={"access_token": request.page_access_token,
+                      "app_secret": _clean_app_secret(request.app_secret)},
         display_name=request.display_name or f"@{data.get('username', request.ig_id)}",
     )
     return to_account_out(db, account)

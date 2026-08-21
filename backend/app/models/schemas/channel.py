@@ -44,23 +44,41 @@ class TelegramConnectRequest(BaseModel):
     bot_token: str
 
 
+# Every manual Meta connect carries the same optional pair.
+#
+# app_secret is what signs the webhooks Meta sends for this account. A customer
+# connecting a number from their *own* Meta app signs with their own secret, so
+# without this the connection verifies, subscribes, and then silently rejects
+# every delivery — the failure looks like "the bot never replies". It is stored
+# per account, in the same Fernet-encrypted blob as the access token, so one
+# deployment can serve many customers each with their own Meta app.
+#
+# app_id only matters where Graph insists on app credentials from the app that
+# issued the token (Messenger's token inspection). Optional everywhere: a
+# deployment that shares one Meta app across tenants keeps working unchanged.
+
+
 class WhatsAppConnectRequest(BaseModel):
     """Manual WhatsApp Cloud API credentials (self-hosters with their own Meta app)."""
     phone_number_id: str
     access_token: str
     waba_id: Optional[str] = None
+    app_secret: Optional[str] = None
     display_name: Optional[str] = None
 
 
 class MessengerConnectRequest(BaseModel):
     page_id: str
     page_access_token: str
+    app_id: Optional[str] = None
+    app_secret: Optional[str] = None
     display_name: Optional[str] = None
 
 
 class InstagramConnectRequest(BaseModel):
     ig_id: str
     page_access_token: str
+    app_secret: Optional[str] = None
     display_name: Optional[str] = None
 
 

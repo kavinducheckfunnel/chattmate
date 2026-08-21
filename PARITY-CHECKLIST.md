@@ -108,16 +108,37 @@ Only 5 lines in the reference — it is a thin page.
 - [ ] **All core systems operational** banner
 - [ ] **Recent incidents** panel
 
-## 10. Backups & Recovery — `OneDriveBackups` (lines 916–990)
+## 10. Backups & Recovery — `OneDriveBackups` (lines 916–990) — **DONE**
 
 The app renders `OneDriveBackups`; `Backups` and `SimpleBackups` exist but are
 unused.
 
-- [ ] **Download to local computer**
-- [ ] **Microsoft OneDrive connection** — `Connect & test` / `Disconnect`
-- [ ] **OneDrive backup schedule** (9 inputs, 4 selects)
-- [ ] **OneDrive backup history** — Created · Method · Contents · Destination · Size · Status
-- [ ] `Run backup now`
+Built against a new backend — there was no backup API at all before this.
+
+- [x] **Download to local computer** — runs `pg_dump`, packs `uploads/`,
+      encrypts, streams once, then deletes the server copy
+- [x] **Microsoft OneDrive connection** — `Connect & test` signs into Entra
+      (client credentials) and *writes* a probe file into the destination
+      folder, so a read-only grant fails here rather than at 02:00 /
+      `Disconnect` clears the credentials and stops the schedule
+- [x] **OneDrive backup schedule** — persisted, and read by a real scheduler
+      (`app/workers/backup_scheduler.py`) behind a Postgres advisory lock
+- [x] **OneDrive backup history** — Created · Method · Contents · Destination ·
+      Size · Status, from `platform_backup_runs`
+- [x] `Run backup now`
+
+Deliberate additions to the reference, both required for the feature to work:
+
+| Addition | Why |
+|---|---|
+| `Day of month` select | The reference only ever renders Daily/Weekly. Monthly without a day cannot be scheduled. |
+| Full IANA time zone list | The reference hardcodes one option (`Asia/Colombo`). |
+| Failure reason under a `Failed` pill | Otherwise the only way to learn why is the server log. |
+
+**Deploy requirements:** the backend image must be rebuilt (`pg_dump` is a new
+system dependency — PGDG `postgresql-client-16`, since Debian ships 15 and
+pg_dump refuses to dump a newer server), and `alembic upgrade heads` must run
+for `add_platform_backups_001`.
 
 ## 11. Audit Logs — `Audit` (lines 991–1005)
 
@@ -154,7 +175,12 @@ unused.
 
 ## Still blocking (unrelated to this port)
 
-- **`META_APP_SECRET`** is still `PASTE_YOUR_APP_SECRET_HERE` — WhatsApp and
-  Messenger cannot receive messages until the real 32-hex secret is in `.env`.
+- **`META_APP_SECRET`** is still `PASTE_YOUR_APP_SECRET_HERE`, but it is no
+  longer a hard blocker: the connect form now takes a per-account **App secret**
+  (WhatsApp / Messenger / Instagram), stored encrypted against the channel
+  account, and webhook signatures are checked against it. Customers running
+  their own Meta app no longer depend on the server-wide value at all. Setting
+  the shared secret in `.env` is still worth doing for any account connected
+  without one.
 - **`pro` price is 14901 cents**, not 14900. Audit log shows an earlier save of
   mine did it. Harmless, but I want the cause before touching prices again.

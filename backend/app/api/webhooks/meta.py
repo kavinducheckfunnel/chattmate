@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.api.webhooks.common import is_duplicate_message
 from app.channels import get_adapter
-from app.channels.meta_base import verify_meta_signature, verify_challenge
+from app.channels.meta_base import (account_app_secret, verify_challenge,
+                                    verify_meta_signature, webhook_account_ids)
 from app.core.logger import get_logger
 from app.database import get_db
 from app.models.channels import ChannelType
@@ -65,10 +66,27 @@ async def meta_webhook(
     background.
     """
     raw_body = await request.body()
-    if not verify_meta_signature(raw_body, request.headers.get("x-hub-signature-256", "")):
+    account_repo = ChannelAccountRepository(db)
+
+    # Tenants who run their own Meta app sign with their own secret, which this
+    # server cannot guess. The ids in the body pick which stored secrets are
+    # worth trying — the body is not trusted for anything else, and the HMAC
+    # still has to verify against whichever key is chosen. The server-wide
+    # secret remains a fallback inside verify_meta_signature, so a shared-app
+    # deployment behaves exactly as before.
+    candidates = account_repo.list_by_external_ids(
+        list(_OBJECT_TO_CHANNEL.values()), webhook_account_ids(raw_body))
+    app_secrets = [secret for secret in (account_app_secret(a) for a in candidates) if secret]
+
+    if not verify_meta_signature(raw_body, request.headers.get("x-hub-signature-256", ""),
+                                 app_secrets):
         # Logged so a rejected delivery is distinguishable from one that never
-        # arrived; the body is untrusted and unlogged.
-        logger.warning(f"Meta webhook rejected: bad signature ({len(raw_body)} bytes)")
+        # arrived; the body is untrusted and unlogged. The secret count is the
+        # one thing that separates "wrong secret" from "no secret configured",
+        # which are different fixes.
+        logger.warning(
+            f"Meta webhook rejected: bad signature ({len(raw_body)} bytes, "
+            f"{len(app_secrets)} account secret(s) tried)")
         raise HTTPException(status_code=403, detail="Invalid signature")
 
     payload = await request.json()
@@ -78,7 +96,6 @@ async def meta_webhook(
         return {"status": "ignored"}
 
     adapter = get_adapter(channel_type)
-    account_repo = ChannelAccountRepository(db)
 
     for inbound in adapter.parse_inbound(payload):
         account = account_repo.get_by_external_id(channel_type, inbound.external_account_id)
