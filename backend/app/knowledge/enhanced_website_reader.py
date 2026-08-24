@@ -62,6 +62,40 @@ class EmptyCrawlError(Exception):
     zero pages, so nobody learns the agent has no content to answer from."""
 
 
+# Extensions that are never a readable page.
+#
+# The previous list held ".jpg" but not ".jpeg", and matched case-sensitively.
+# That is how a 766KB Nikon D850 photograph was fetched, decoded as text and
+# stored as a knowledge document: the crawler indexed the raw JFIF bytes, and
+# the agent then had a third of a megabyte of binary in its search index.
+#
+# Lower-cased before matching, and compared against a tuple so str.endswith does
+# the whole set in one pass. This is only a cheap pre-filter that avoids the
+# fetch — the authoritative check is the Content-Type guard in _fetch, because a
+# URL with no extension at all can still serve an image.
+NON_PAGE_EXTENSIONS = (
+    # images
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".svg", ".bmp", ".tiff",
+    ".tif", ".ico", ".heic",
+    # documents handled by their own readers, or not at all
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".rtf",
+    # archives and binaries
+    ".zip", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".exe", ".dll", ".dmg",
+    ".pkg", ".deb", ".rpm", ".bin", ".iso",
+    # media
+    ".mp3", ".mp4", ".m4a", ".m4v", ".wav", ".ogg", ".webm", ".avi", ".mov",
+    ".wmv", ".flv", ".mkv",
+    # front-end assets
+    ".css", ".js", ".mjs", ".map", ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    # data feeds that are not prose
+    ".json", ".xml", ".rss", ".atom", ".csv",
+)
+
+# Content types worth parsing as a page. Anything else is skipped even if the
+# URL looked like a page.
+READABLE_CONTENT_TYPES = ("text/html", "application/xhtml", "text/plain")
+
+
 @dataclass
 class EnhancedWebsiteReader(WebsiteReader):
     """Enhanced Reader for Websites with more robust content extraction"""
@@ -619,7 +653,22 @@ class EnhancedWebsiteReader(WebsiteReader):
                     response = safe_get(client, current_url)
                     logger.info(f"Received response: status={response.status_code}, url={response.url}")
                     response.raise_for_status()
-                    
+
+                    # What the server says it sent, not what the URL implied.
+                    # httpx will happily decode a JPEG into a str of replacement
+                    # characters, and BeautifulSoup will happily parse it — the
+                    # result is a "page" of binary noise that embeds to nothing
+                    # and pollutes every future search. Extensions cannot catch
+                    # this on their own: plenty of asset URLs carry none.
+                    content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+                    if content_type and not content_type.startswith(READABLE_CONTENT_TYPES):
+                        logger.info(
+                            f"Skipping {current_url}: Content-Type {content_type} is not a readable page")
+                        # Bare None, matching this function's other early exits —
+                        # it returns Optional[Tuple[str, str, List[str]]], so a
+                        # 2-tuple here would unpack wrongly in the caller.
+                        return None
+
                 # Parse HTML with BeautifulSoup
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
@@ -1072,9 +1121,7 @@ class EnhancedWebsiteReader(WebsiteReader):
 
             if (
                 is_same_domain
-                and not any(parsed_url.path.endswith(ext) for ext in [
-                    ".pdf", ".jpg", ".png", ".gif", ".zip", ".mp3", ".mp4", ".exe", ".dll"
-                ])
+                and not parsed_url.path.lower().endswith(NON_PAGE_EXTENSIONS)
                 and not parsed_url.path.startswith("#")  # Skip anchors
             ):
                 seen.add(full_url)
