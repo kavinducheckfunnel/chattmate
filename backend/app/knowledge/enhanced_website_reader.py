@@ -29,7 +29,10 @@ from bs4 import BeautifulSoup, Tag
 import httpx
 
 from agno.document.base import Document
+from agno.document.chunking.fixed import FixedSizeChunking
+from agno.document.chunking.strategy import ChunkingStrategy
 from agno.document.reader.website_reader import WebsiteReader
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.knowledge.crawl4ai_fallback import get_crawl4ai_fallback
 from app.knowledge.content_summarizer import get_content_summarizer
@@ -100,6 +103,29 @@ class EnhancedWebsiteReader(WebsiteReader):
     respect_robots_txt: bool = True  # Whether to respect robots.txt
     max_workers: int = 10  # Maximum number of parallel workers for crawling
     verify_ssl: bool = True  # Whether to verify SSL certificates (set to False for self-signed certs)
+
+    # Splitting is not optional here, and the size is not a matter of taste.
+    #
+    # This reader produced one Document per crawled page and handed it straight
+    # to the embedder. FASTEMBED_MODEL accepts 512 tokens and silently drops the
+    # rest, so a 31KB page — the average on the sites indexed so far — was stored
+    # as a vector representing only its first ~1,300 characters. On a typical
+    # site that prefix is the navigation menu, which is why search returned
+    # confident nonsense: every page embedded to roughly "logo, Home, About,
+    # Contact" and nothing a customer actually asked about was ever in the index.
+    #
+    # chunking_strategy is set here rather than left None on purpose.
+    # AgentKnowledge's validator fills a None strategy in from its own default
+    # (FixedSizeChunking(chunk_size=5000)), which is ~4x over the token limit —
+    # so leaving it unset would re-introduce the same silent truncation through
+    # the back door.
+    chunk_size: int = settings.KB_CHUNK_SIZE
+    chunking_strategy: Optional[ChunkingStrategy] = field(
+        default_factory=lambda: FixedSizeChunking(
+            chunk_size=settings.KB_CHUNK_SIZE,
+            overlap=settings.KB_CHUNK_OVERLAP,
+        )
+    )
     
     # Track crawling statistics
     _crawled_pages_count: int = 0
@@ -1141,16 +1167,27 @@ class EnhancedWebsiteReader(WebsiteReader):
         # Create a callback for immediate document processing
         def on_document_created(page_url: str, content: str):
             index = len(documents) + 1
-            document = self._create_document_from_content(page_url, content, url, index)
-            documents.append(document)
-            
-            # Call vector DB callback if provided
+            page = self._create_document_from_content(page_url, content, url, index)
+
+            # Split before embedding — see chunk_size above. FixedSizeChunking
+            # gives each piece its own id (`{page_url}_{n}`), so upserting them
+            # does not collapse a page back into a single row.
+            chunks = self.chunk_document(page) if self.chunk else [page]
+            documents.extend(chunks)
+            if len(chunks) > 1:
+                logger.info(
+                    f"Split {page_url} ({len(page.content)} chars) into {len(chunks)} chunks")
+
+            # Each chunk is sent separately, and one failure does not abandon the
+            # rest of the page: a partially indexed page still answers questions
+            # about the parts that made it in.
             if vector_db_callback:
-                try:
-                    vector_db_callback(document)
-                    logger.info(f"✓ Document {document.id} successfully sent to vector DB")
-                except Exception as e:
-                    logger.error(f"Error sending document {document.id} to vector DB: {str(e)}")
+                for chunk in chunks:
+                    try:
+                        vector_db_callback(chunk)
+                    except Exception as e:
+                        logger.error(f"Error sending chunk {chunk.id} to vector DB: {str(e)}")
+                logger.info(f"✓ {len(chunks)} chunk(s) from {page_url} sent to vector DB")
         
         # Crawl website with the callback for immediate document processing
         self.crawl(url, on_document_callback=on_document_created, on_url_crawled_callback=url_crawled_callback)

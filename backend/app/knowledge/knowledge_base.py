@@ -293,7 +293,13 @@ class KnowledgeManager:
                         knowledge_base = EnhancedPDFKnowledgeBase(
                             path=path_to_use,
                             vector_db=self.vector_db,
-                            reader=PDFReader(chunk=chunk) if not reader else reader
+                            # chunk_size is pinned to the embedder's limit, not
+                            # left at agno's 5000 default — that is ~1,950 tokens
+                            # against a 512-token model, so the tail of every
+                            # chunk was being embedded into nothing.
+                            reader=PDFReader(
+                                chunk=chunk, chunk_size=settings.KB_CHUNK_SIZE,
+                            ) if not reader else reader
                         )
                         if filename is None:
                             filename = os.path.splitext(os.path.basename(file_path))[0]
@@ -319,7 +325,9 @@ class KnowledgeManager:
                         knowledge_base = EnhancedPDFKnowledgeBase(
                             path=path_to_use,
                             vector_db=self.vector_db,
-                            reader=PDFImageReader(chunk=chunk)
+                            reader=PDFImageReader(
+                                chunk=chunk, chunk_size=settings.KB_CHUNK_SIZE,
+                            )
                         )
                         if filename is None:
                             filename = os.path.splitext(os.path.basename(file_path))[0]

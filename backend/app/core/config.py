@@ -152,6 +152,26 @@ class Settings(BaseSettings):
     KB_BATCH_SIZE: int = int(os.getenv("KB_BATCH_SIZE", "5"))
     KB_OPTIMIZE_ON: int = int(os.getenv("KB_OPTIMIZE_ON", "1000"))
 
+    # How much text goes into one embedding.
+    #
+    # This is bounded by the embedder, not by taste. FASTEMBED_MODEL
+    # (BAAI/bge-small-en-v1.5) accepts 512 tokens and *silently discards*
+    # everything after them — no error, no warning, just a vector that does not
+    # represent most of the document. Crawled pages here measured as low as 2.57
+    # characters per token (markdown link soup tokenises far worse than prose),
+    # so 512 tokens is about 1,315 characters in the worst case.
+    #
+    # 1200 leaves headroom under that. Agno's own default is 5000, which is
+    # roughly 1,950 tokens — nearly four times over the limit — so this must be
+    # set explicitly rather than left to the library.
+    #
+    # Raise it only alongside an embedder with a larger context, and re-index
+    # afterwards: existing vectors are not resized by changing this.
+    KB_CHUNK_SIZE: int = int(os.getenv("KB_CHUNK_SIZE", "1200"))
+    # Carried between neighbouring chunks so a sentence that straddles a
+    # boundary is still findable from either side.
+    KB_CHUNK_OVERLAP: int = int(os.getenv("KB_CHUNK_OVERLAP", "150"))
+
     # Hard ceiling on a single agent run (model + tool calls). A stuck run is
     # cancelled instead of hanging the chat handler forever (issue #269).
     AGENT_RUN_TIMEOUT: int = int(os.getenv("AGENT_RUN_TIMEOUT", "90"))
