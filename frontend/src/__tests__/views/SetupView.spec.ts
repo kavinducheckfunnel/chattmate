@@ -17,7 +17,7 @@ SetupView serves two jobs: first-run setup, and ongoing self-serve signup at
 /signup.
 
 This suite was rewritten when the view was. It previously asserted the
-single-tenant behaviour — a "Welcome to ChatterMate" heading, a business-hours
+single-tenant behaviour — a "Welcome to Growmiq mini" heading, a business-hours
 grid, and a redirect to /ai-agents as soon as *any* organization existed. That
 last one is the interesting case: once every visitor creates their own
 workspace, redirecting on "an organization exists" makes signup unreachable for

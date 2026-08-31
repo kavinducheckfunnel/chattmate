@@ -76,7 +76,7 @@ const activeTab = ref(hasEnterpriseModule ? 'chattermate' : 'custom')
 // Watch for existing configuration changes to set the correct tab
 watch([hasExistingConfig, setupConfig], ([hasConfig, config]) => {
   if (hasConfig && config.provider) {
-    // If existing config is ChatterMate, show ChatterMate tab
+    // If existing config is Growmiq mini, show Growmiq mini tab
     if (config.provider.toLowerCase() === 'chattermate' && hasEnterpriseModule) {
       activeTab.value = 'chattermate'
     } else {
@@ -346,7 +346,7 @@ const setupChatterMateAI = async () => {
       emit('ai-setup-complete')
     }
   } catch (error) {
-    console.error('ChatterMate setup error:', error)
+    console.error('Growmiq mini setup error:', error)
   }
 }
 
@@ -357,7 +357,7 @@ const submitButtonText = computed(() => {
 })
 
 const chatterMateButtonText = computed(() => {
-  return hasExistingConfig.value ? 'Update to ChatterMate AI' : 'Proceed with ChatterMate AI'
+  return hasExistingConfig.value ? 'Update to Growmiq mini AI' : 'Proceed with Growmiq mini AI'
 })
 </script>
 
@@ -374,7 +374,7 @@ const chatterMateButtonText = computed(() => {
 
       <header class="page-header">
         <h1 class="page-title">AI Configuration</h1>
-        <p class="page-subtitle">Your agents already run on ChatterMate AI. Switch to your own model any time — this is optional.</p>
+        <p class="page-subtitle">Your agents already run on Growmiq mini AI. Switch to your own model any time — this is optional.</p>
       </header>
 
       <div class="tabs-container">
@@ -390,7 +390,7 @@ const chatterMateButtonText = computed(() => {
                 <circle cx="12" cy="12" r="8"></circle>
               </svg>
             </span>
-            <span class="tab-label">ChatterMate AI</span>
+            <span class="tab-label">Growmiq mini AI</span>
           </div>
           <div
             class="tab"
@@ -425,7 +425,7 @@ const chatterMateButtonText = computed(() => {
                   <span class="active-dot"></span>
                   <span class="active-text">ACTIVE</span>
                 </span>
-                <h4>ChatterMate AI</h4>
+                <h4>Growmiq mini AI</h4>
                 <p class="provider-tagline">Zero setup. Managed models, ready instantly — this is the default.</p>
               </div>
 
@@ -625,7 +625,7 @@ const chatterMateButtonText = computed(() => {
                     Enter any model ID your provider supports — we'll validate it with your API key.
                   </p>
                   <p v-if="useCustomModel" class="model-warning">
-                    ⚠️ Custom models aren't verified by ChatterMate. Smaller or older models may not reliably support tool calling and structured output, which can affect knowledge search, lead capture, and ending chats. Prefer a larger, tool-calling-capable model.
+                    ⚠️ Custom models aren't verified by Growmiq mini. Smaller or older models may not reliably support tool calling and structured output, which can affect knowledge search, lead capture, and ending chats. Prefer a larger, tool-calling-capable model.
                   </p>
                 </div>
 

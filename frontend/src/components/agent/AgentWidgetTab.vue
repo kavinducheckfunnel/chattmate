@@ -144,7 +144,7 @@ const iframeEmbedCode = computed(() => {
             </div>
 
             <p class="code-description">
-              This agent requires token authentication. Your backend must generate a token using the ChatterMate API before loading the widget.
+              This agent requires token authentication. Your backend must generate a token using the Growmiq mini API before loading the widget.
             </p>
 
             <!-- Step 1: Get API Key -->
@@ -166,7 +166,7 @@ const iframeEmbedCode = computed(() => {
                 <h5 class="step-title">Generate token (Server-side)</h5>
               </div>
               <p class="step-description">
-                Create a backend endpoint that calls the ChatterMate API to generate a token:
+                Create a backend endpoint that calls the Growmiq mini API to generate a token:
               </p>
               <div class="code-block">
                 <pre><code>// Your backend endpoint (e.g., /api/chat-token)

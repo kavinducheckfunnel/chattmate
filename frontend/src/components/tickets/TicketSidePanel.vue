@@ -106,7 +106,7 @@ function pickAssignee(userId: string | null) {
           {{ ticketInitials(assigneeName) }}
         </span>
         <div class="assignee-info">
-          <div class="assignee-name">{{ assigneeName || 'ChatterMate AI' }}</div>
+          <div class="assignee-name">{{ assigneeName || 'Growmiq mini AI' }}</div>
           <div class="assignee-sub">{{ assigneeName ? 'Human agent' : 'Unassigned — AI handles' }}</div>
         </div>
         <button v-if="canManage" class="change-btn" @click="isPickingAssignee = !isPickingAssignee">
@@ -114,7 +114,7 @@ function pickAssignee(userId: string | null) {
         </button>
       </div>
       <div v-if="isPickingAssignee" class="assignee-picker">
-        <button class="picker-option" @click="pickAssignee(null)">ChatterMate AI (unassign)</button>
+        <button class="picker-option" @click="pickAssignee(null)">Growmiq mini AI (unassign)</button>
         <button
           v-for="user in users"
           :key="user.id"

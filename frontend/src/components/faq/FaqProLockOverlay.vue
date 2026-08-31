@@ -56,7 +56,7 @@ function goToSubscription() {
         </div>
         <h3 class="lock-card__title">Auto-generate FAQs with Pro</h3>
         <p class="lock-card__copy">
-          ChatterMate reads every knowledge source and drafts clear, ready-to-publish FAQs — grouped
+          Growmiq mini reads every knowledge source and drafts clear, ready-to-publish FAQs — grouped
           by topic and kept in sync as your docs change.
         </p>
         <div class="lock-card__actions">

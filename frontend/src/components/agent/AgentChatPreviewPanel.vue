@@ -613,7 +613,7 @@ const handleInitiationClick = () => {
                     <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
                     <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
                 </svg>
-                <span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong>
+                <span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">Growmiq mini</strong>
             </div>
         </div>
 
@@ -716,7 +716,7 @@ const handleInitiationClick = () => {
                     <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
                     <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
                 </svg>
-                <span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong>
+                <span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">Growmiq mini</strong>
             </div>
         </div>
 
@@ -1175,8 +1175,8 @@ const handleInitiationClick = () => {
 .powered-by-welcome .chattermate-logo {
     flex-shrink: 0;
 }
-/* "Powered by" is muted; "ChatterMate" is emphasized (comp). Both inherit the footer's
-   own colour (white on dark themes) so ChatterMate stays visible — dimming is on the
+/* "Powered by" is muted; "Growmiq mini" is emphasized (comp). Both inherit the footer's
+   own colour (white on dark themes) so Growmiq mini stays visible — dimming is on the
    prefix only, never a dark app token that would vanish on the dark panel. */
 .cm-powered-prefix { opacity: 0.6; }
 .cm-brand { font-weight: 700; }

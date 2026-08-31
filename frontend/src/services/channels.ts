@@ -79,7 +79,7 @@ export interface WhatsAppTemplate {
 
 /**
  * Whether the WhatsApp connect UI can offer Embedded Signup. Everything but
- * `enabled` is null when it can't — a self-hoster has no ChatterMate Meta app
+ * `enabled` is null when it can't — a self-hoster has no Growmiq mini Meta app
  * to onboard under, and the plan check stays on the server.
  */
 export interface EmbeddedSignupConfig {

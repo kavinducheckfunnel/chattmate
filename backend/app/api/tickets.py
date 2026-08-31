@@ -130,7 +130,7 @@ def _activity_out(activity) -> TicketActivityOut:
     if activity.actor_user is not None:
         out.actor_name = activity.actor_user.full_name
     elif str(activity.actor_type) == TicketActorType.AI.value:
-        out.actor_name = "ChatterMate AI"
+        out.actor_name = "Growmiq mini AI"
     return out
 
 

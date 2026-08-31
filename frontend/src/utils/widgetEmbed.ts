@@ -64,7 +64,7 @@ export function buildWidgetEmbed(widgetId: string, requireTokenAuth?: boolean): 
         script.src = '${loaderOrigin}/webclient/chattermate.min.js';
         document.head.appendChild(script);
         })
-        .catch(e => console.error('[ChatterMate] Initialization failed:', e));
+        .catch(e => console.error('[Growmiq mini] Initialization failed:', e));
     })();
     <\/script>`
   }

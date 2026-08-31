@@ -51,7 +51,7 @@ const handleNavigation = () => {
                     <div class="dot"></div>
                     <div class="dot"></div>
                 </div>
-                <span v-if="!isCollapsed" class="logo-text">ChatterMate</span>
+                <span v-if="!isCollapsed" class="logo-text">Growmiq mini</span>
             </div>
             <SidebarToggle :isCollapsed="isCollapsed" @toggle="emit('toggle')" />
         </div>

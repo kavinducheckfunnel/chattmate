@@ -44,7 +44,7 @@ const timeAgo = (iso?: string | null) =>
 
 function actorName(activity: TicketActivity): string {
   if (activity.actor_name) return activity.actor_name
-  if (activity.actor_type === 'ai') return 'ChatterMate AI'
+  if (activity.actor_type === 'ai') return 'Growmiq mini AI'
   if (activity.actor_type === 'customer') return 'Customer'
   return 'System'
 }

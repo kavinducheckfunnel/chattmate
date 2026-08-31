@@ -92,7 +92,7 @@ async function copy(text: string) {
     <!-- Step 1: enter a domain -->
     <template v-if="phase === 'empty'">
       <p class="domain-copy">
-        Serve your help center from your own subdomain instead of the ChatterMate URL.
+        Serve your help center from your own subdomain instead of the Growmiq mini URL.
         Enter it below and we'll show you the two DNS records to add.
       </p>
       <div class="domain-form">

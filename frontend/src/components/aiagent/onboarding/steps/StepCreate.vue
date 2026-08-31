@@ -24,7 +24,7 @@ import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import { subscriptionStorage } from '@/utils/storage'
 import type { Agent } from '@/types/agent'
 
-// Lazy-load the provider setup form — only needed on OSS builds without ChatterMate AI
+// Lazy-load the provider setup form — only needed on OSS builds without Growmiq mini AI
 const AISetup = defineAsyncComponent(() => import('@/components/ai/AISetup.vue'))
 
 const { hasEnterpriseModule } = useEnterpriseFeatures()
@@ -209,7 +209,7 @@ const generateWithAI = async () => {
     isGenerating.value = false
   }
 }
-// OSS-only: when ChatterMate AI isn't available we must collect a provider key first
+// OSS-only: when Growmiq mini AI isn't available we must collect a provider key first
 const showAiGate = ref(false)
 
 const ensureAIConfig = async (): Promise<boolean> => {
@@ -219,7 +219,7 @@ const ensureAIConfig = async (): Promise<boolean> => {
   } catch (err) {
     if (err instanceof AxiosError && err.response?.status === 404) {
       if (hasEnterpriseModule) {
-        // Managed ChatterMate AI — zero setup, backend injects the key
+        // Managed Growmiq mini AI — zero setup, backend injects the key
         await aiService.setupAI({
           model_type: 'CHATTERMATE',
           model_name: 'chattermate',
@@ -442,7 +442,7 @@ const onAiConfigured = async () => {
       <div class="ai-note">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8" /></svg>
         <span>
-          Powered by ChatterMate AI — ready instantly. Want your own model? Set it later in
+          Powered by Growmiq mini AI — ready instantly. Want your own model? Set it later in
           <strong>AI Configuration → Advanced</strong>.
         </span>
       </div>

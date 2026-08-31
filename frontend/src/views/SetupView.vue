@@ -206,7 +206,7 @@ const handleSubmit = async () => {
                     <div class="dot"></div>
                     <div class="dot"></div>
                 </div>
-                <span class="logo-word">ChatterMate</span>
+                <span class="logo-word">Growmiq mini</span>
             </div>
 
             <!-- Post-signup state: the account exists, the session does not. -->

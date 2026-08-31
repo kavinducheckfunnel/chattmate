@@ -33,7 +33,7 @@ const emit = defineEmits<{
   (e: 'connected', account: ChannelAccount): void
 }>()
 
-// The other half of the setup: values that flow OUT of ChatterMate and into
+// The other half of the setup: values that flow OUT of Growmiq mini and into
 // the customer's Meta app. Meta delivers to whichever callback that app has
 // configured, so a connection made without these verifies fine and then never
 // receives a message — the failure is silent and looks like a broken product.
@@ -202,7 +202,7 @@ const saveAgent = async () => {
           @select="onPageSelected"
         />
 
-        <!-- One-click signup under ChatterMate's Meta app; the manual form
+        <!-- One-click signup under Growmiq mini's Meta app; the manual form
              stays available for anyone who already has their own credentials. -->
         <div v-else-if="signupEnabled && !showManualForm" class="meta-signup">
           <p class="meta-intro">{{ signupCopy.intro }}</p>
@@ -224,7 +224,7 @@ const saveAgent = async () => {
             class="meta-intro-link"
           >developers.facebook.com</a>{{ form.introAfter }}
         </p>
-        <!-- Copied OUT of ChatterMate and INTO the customer's Meta app.
+        <!-- Copied OUT of Growmiq mini and INTO the customer's Meta app.
              Placed before the credential inputs because it is step one in
              Meta's dashboard: the webhook has to be pointed here before the
              app will deliver anything. -->

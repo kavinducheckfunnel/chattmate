@@ -136,7 +136,7 @@ async def get_providers(
     if not HAS_ENTERPRISE and platform_ai.get_config(db).is_configured:
         providers = [{
             "value": "CHATTERMATE",
-            "label": "ChatterMate (managed)",
+            "label": "Growmiq mini (managed)",
             "requires_api_key": False,
             "custom_allowed": False,
             "api_key_url": "",

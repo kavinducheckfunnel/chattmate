@@ -72,7 +72,7 @@ const resend = async () => {
                     <div class="dot"></div>
                     <div class="dot"></div>
                 </div>
-                <span class="logo-word">ChatterMate</span>
+                <span class="logo-word">Growmiq mini</span>
             </div>
 
             <template v-if="state === 'verifying'">

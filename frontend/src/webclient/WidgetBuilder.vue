@@ -1756,7 +1756,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
                     <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
                 </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
+                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">Growmiq mini</strong></a>
             </div>
         </div>
     </div>
@@ -1920,7 +1920,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
                     <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
                 </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
+                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">Growmiq mini</strong></a>
             </div>
         </div>
 
@@ -1952,7 +1952,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
                     <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
                 </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
+                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">Growmiq mini</strong></a>
             </div>
         </div>
 
@@ -2115,7 +2115,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
                     <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
                 </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
+                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">Growmiq mini</strong></a>
             </div>
         </div>
 
@@ -2809,7 +2809,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
                     <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
                 </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
+                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">Growmiq mini</strong></a>
             </div>
         </div>
 
@@ -3465,7 +3465,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
     gap: 6px;
 }
 
-/* Footer: "Powered by" muted, "ChatterMate" emphasized (comp). Dimming lives on the
+/* Footer: "Powered by" muted, "Growmiq mini" emphasized (comp). Dimming lives on the
    prefix span (not the container) so the brand keeps the full text colour. */
 .cm-powered-prefix { opacity: 0.6; }
 .cm-brand { font-weight: 700; }

@@ -34,7 +34,7 @@ defineEmits<{
     <FaqOrb class="empty-state__orb" :size="64" />
     <h3 class="empty-state__title">No FAQs yet</h3>
     <p class="empty-state__copy">
-      Let ChatterMate read your knowledge base and draft clear, ready-to-publish FAQs — grouped by
+      Let Growmiq mini read your knowledge base and draft clear, ready-to-publish FAQs — grouped by
       topic and kept in sync as your docs change.
     </p>
     <div class="empty-state__pill">

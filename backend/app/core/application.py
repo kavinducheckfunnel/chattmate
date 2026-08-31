@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 
 # Create FastAPI app instance
 app = FastAPI(
-    title="ChatterMate API",
+    title="Growmiq mini API",
     description="AI-Powered Customer Support Platform",
     version="1.0.0"
 )

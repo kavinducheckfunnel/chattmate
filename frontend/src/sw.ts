@@ -110,7 +110,7 @@ if (firebaseConfig.apiKey) {
     // Messages are data-only (title/body in data): a notification payload
     // would make the Firebase SDK auto-display a duplicate copy that also
     // swallows clicks. The notification?. fallbacks keep older senders working.
-    const title = payload.data?.title || payload.notification?.title || 'ChatterMate'
+    const title = payload.data?.title || payload.notification?.title || 'Growmiq mini'
     const body = payload.data?.body || payload.notification?.body
     const sessionId = payload.data?.session_id
 

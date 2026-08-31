@@ -346,7 +346,7 @@ async def root():
     return {
         "name": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "description": "Welcome to ChatterMate API"
+        "description": "Welcome to Growmiq mini API"
     }
 
 @app.api_route("/health", methods=["GET"], operation_id="get_health_check")

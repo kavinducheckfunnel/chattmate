@@ -394,7 +394,7 @@ onMounted(fetchConnectors)
 
           <p class="tip-note">
             Tip: use a read-only replica and a database user with SELECT-only grants — a second
-            fence beneath ChatterMate's own guardrails.
+            fence beneath Growmiq mini's own guardrails.
           </p>
         </template>
         <div v-else class="editing-note">

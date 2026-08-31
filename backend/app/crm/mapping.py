@@ -109,7 +109,7 @@ def build_note_body(payload: LeadPayload) -> str:
     render notes as HTML, so plain newlines would collapse and run the summary
     into the header. Labelled lines keep the AI summary unmistakable; dynamic
     values are escaped."""
-    lines = ["<b>Lead captured by ChatterMate</b>"]
+    lines = ["<b>Lead captured by Growmiq mini</b>"]
     if payload.summary:
         lines.append(f"<b>AI summary:</b> {html.escape(payload.summary)}")
     for label, value in (payload.custom_fields or {}).items():

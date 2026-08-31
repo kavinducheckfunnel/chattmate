@@ -67,7 +67,7 @@ function submitReject() {
         <div>
           <div class="banner-title">AI proposes a resolution — awaiting your approval</div>
           <div class="banner-sub">
-            Approving resolves the ticket and sends the customer message below. ChatterMate never
+            Approving resolves the ticket and sends the customer message below. Growmiq mini never
             executes infrastructure changes — any fix stays with your team.
           </div>
         </div>
@@ -134,7 +134,7 @@ function submitReject() {
           <div class="banner-sub">
             <template v-if="proposal.decided_by_name">By {{ proposal.decided_by_name }} — </template>
             the ticket was resolved and the customer notified. Any infrastructure change is
-            performed by your team, not ChatterMate.
+            performed by your team, not Growmiq mini.
           </div>
         </div>
       </div>

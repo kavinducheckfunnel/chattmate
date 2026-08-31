@@ -362,7 +362,7 @@ const handleDisconnectShopify = () => {
     window.open(shopifyAdminUrl, '_blank')
 
     // Show a helpful toast message
-    toast.info('Please uninstall the ChatterMate app from your Shopify admin to complete the disconnection.')
+    toast.info('Please uninstall the Growmiq mini app from your Shopify admin to complete the disconnection.')
   } catch (error: any) {
     console.error('Error opening Shopify admin:', error)
     toast.error('Error opening Shopify admin')
@@ -399,7 +399,7 @@ const availableIntegrations = computed<IntegrationCard[]>(() => [
   {
     id: 'jira',
     name: 'Jira',
-    description: 'Connect to Jira to create issues directly from ChatterMate.',
+    description: 'Connect to Jira to create issues directly from Growmiq mini.',
     logo: jiraLogo,
     category: 'PROJECT MANAGEMENT',
     color: 'purple',
@@ -412,7 +412,7 @@ const availableIntegrations = computed<IntegrationCard[]>(() => [
   {
     id: 'shopify',
     name: 'Shopify',
-    description: 'Install from Shopify App Store to integrate your store with ChatterMate.',
+    description: 'Install from Shopify App Store to integrate your store with Growmiq mini.',
     logo: shopifyLogo,
     category: 'E-COMMERCE',
     color: 'teal',
@@ -656,7 +656,7 @@ onMounted(async () => {
       <div class="int-page-header">
         <div class="int-page-titles">
           <h1 class="int-title">Integrations</h1>
-          <p class="int-subtitle">Connect ChatterMate with the tools your team already uses.</p>
+          <p class="int-subtitle">Connect Growmiq mini with the tools your team already uses.</p>
         </div>
         <div class="int-search">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -823,7 +823,7 @@ onMounted(async () => {
           <p>To disconnect Shopify:</p>
           <ul>
             <li>You'll be redirected to your Shopify admin</li>
-            <li>Uninstall the ChatterMate app from your Shopify store</li>
+            <li>Uninstall the Growmiq mini app from your Shopify store</li>
             <li>This ensures the disconnection is synchronized on both platforms</li>
             <li>You'll need to reinstall the app if you want to use it again</li>
           </ul>
@@ -861,7 +861,7 @@ onMounted(async () => {
           <p>Disconnecting this CRM will:</p>
           <ul>
             <li>Stop pushing captured leads to it (queued pushes are cancelled)</li>
-            <li>Revoke ChatterMate's access tokens</li>
+            <li>Revoke Growmiq mini's access tokens</li>
             <li>Leave agents' "Sync to CRM" setting in place — it stays inactive until you reconnect</li>
           </ul>
         </div>

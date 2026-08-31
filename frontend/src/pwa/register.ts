@@ -57,7 +57,7 @@ async function applyUpdate(reload: (reloadPage?: boolean) => Promise<void>) {
 async function promptForUpdate(reload: (reloadPage?: boolean) => Promise<void>) {
   try {
     const { toast } = await import('vue-sonner')
-    toast('A new version of ChatterMate is available', {
+    toast('A new version of Growmiq mini is available', {
       description: 'Reload to pick up the latest changes.',
       duration: Number.POSITIVE_INFINITY,
       action: {

@@ -124,7 +124,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     <aside class="pf-sidebar">
       <div class="pf-brand">
         <span class="pf-brand-mark">CM</span>
-        <span>ChatterMate</span>
+        <span>Growmiq mini</span>
         <span class="pf-brand-tag">ADMIN</span>
       </div>
 

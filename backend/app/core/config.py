@@ -32,7 +32,7 @@ load_dotenv(BACKEND_DIR / ".env")
 DEFAULT_CORS = ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "ChatterMate"
+    PROJECT_NAME: str = "Growmiq mini"
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
 
@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "your-email@gmail.com")
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "your-password")
     FROM_EMAIL: str = os.getenv("FROM_EMAIL", "noreply@chattermate.chat")
-    FROM_NAME: str = os.getenv("FROM_NAME", "ChatterMate")
+    FROM_NAME: str = os.getenv("FROM_NAME", "Growmiq mini")
 
     # Shopify
     SHOPIFY_API_KEY: str = os.getenv("SHOPIFY_API_KEY", "")
@@ -198,7 +198,7 @@ class Settings(BaseSettings):
     # Name used in the subject and body of platform emails. Separate from
     # PROJECT_NAME so the product can be white-labelled for resale without
     # renaming the application itself.
-    PLATFORM_NAME: str = os.getenv("PLATFORM_NAME", "ChatterMate")
+    PLATFORM_NAME: str = os.getenv("PLATFORM_NAME", "Growmiq mini")
 
     # Whether an unverified owner is blocked from signing in.
     #

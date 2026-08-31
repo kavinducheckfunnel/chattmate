@@ -73,10 +73,10 @@ const canSubmit = computed(() => {
 
 const hint = computed(() => {
   if (mode.value === 'articles')
-    return 'ChatterMate follows the article links on that page and imports each article verbatim as a draft — formatting and images included.'
+    return 'Growmiq mini follows the article links on that page and imports each article verbatim as a draft — formatting and images included.'
   if (mode.value === 'pdf')
-    return 'ChatterMate reads the PDF, extracts each question and answer, and adds them here as drafts for you to review before publishing.'
-  return 'ChatterMate crawls the page, extracts each question and answer, and adds them here as drafts for you to review before publishing.'
+    return 'Growmiq mini reads the PDF, extracts each question and answer, and adds them here as drafts for you to review before publishing.'
+  return 'Growmiq mini crawls the page, extracts each question and answer, and adds them here as drafts for you to review before publishing.'
 })
 
 const fileSize = computed(() => {

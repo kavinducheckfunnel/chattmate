@@ -242,7 +242,7 @@ function saveAll() {
         <p class="section-hint">
           Customer emails are sent from your connected email inbox —
           <router-link to="/settings/integrations" class="hint-link">connect one under Integrations</router-link>
-          to send from your own domain; otherwise ChatterMate's address is used.
+          to send from your own domain; otherwise Growmiq mini's address is used.
         </p>
         <div class="template-grid">
           <div class="template-card">
@@ -339,7 +339,7 @@ function saveAll() {
         </div>
         <p class="section-hint">
           One-way sync: tickets at or above the chosen priority also open a Jira issue (using
-          your connected Jira and the agent's project). ChatterMate stays the source of truth.
+          your connected Jira and the agent's project). Growmiq mini stays the source of truth.
         </p>
         <div v-if="settings.jira_escalation_enabled" class="jira-row">
           <span class="timeout-label">Escalate tickets with priority</span>
