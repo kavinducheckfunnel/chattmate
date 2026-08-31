@@ -19,7 +19,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timezone
-from typing import ClassVar, Optional
+from typing import ClassVar, Iterable, Optional
 
 import httpx
 
@@ -59,28 +59,95 @@ def graph_url(path: str, base: str = GRAPH_BASE) -> str:
     return f"{base}/{settings.META_GRAPH_VERSION}/{path}"
 
 
-def verify_meta_signature(raw_body: bytes, signature_header: str) -> bool:
-    """Validate the X-Hub-Signature-256 header against our app secrets.
+def webhook_account_ids(raw_body: bytes) -> set[str]:
+    """Account ids named in an *unverified* webhook body.
+
+    Used only to choose which app secrets are worth trying. That is safe in a
+    way that acting on the body would not be: naming an account selects a
+    candidate key, it does not authorise anything, and the HMAC for that key
+    still has to verify. An attacker who points at someone else's account has
+    gained a failed signature check.
+
+    Two ids per WhatsApp entry, because they are different things: `entry.id` is
+    the WABA, while the account is keyed by the phone number id that appears
+    further down in the change metadata. Messenger and Instagram put the account
+    id straight on the entry.
+    """
+    try:
+        payload = json.loads(raw_body)
+    except (ValueError, UnicodeDecodeError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+
+    ids: set[str] = set()
+    for entry in payload.get("entry") or []:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = entry.get("id")
+        if isinstance(entry_id, (str, int)):
+            ids.add(str(entry_id))
+        for change in entry.get("changes") or []:
+            if not isinstance(change, dict):
+                continue
+            metadata = (change.get("value") or {}).get("metadata") or {}
+            phone_number_id = metadata.get("phone_number_id")
+            if isinstance(phone_number_id, (str, int)):
+                ids.add(str(phone_number_id))
+    # A malformed or hostile body must not turn into an unbounded IN (...) query.
+    return set(list(ids)[:20])
+
+
+def verify_meta_signature(raw_body: bytes, signature_header: str,
+                          app_secrets: Iterable[str] = ()) -> bool:
+    """Validate the X-Hub-Signature-256 header against every secret in play.
 
     The signature covers the raw request body; it must be checked before the
-    body is parsed. Uses a constant-time comparison.
+    body is acted on. Uses a constant-time comparison.
 
-    Instagram Login webhooks are signed with the Instagram app secret rather
-    than the Meta one, and the only thing that would say which product sent this
-    is inside the body we have not authenticated yet. So this tries each secret
-    we own instead of trusting unverified content to choose one; an attacker
-    still has to forge one of them.
+    `app_secrets` are the secrets belonging to the connected accounts this
+    delivery could be for. Customers who run their own Meta app sign with their
+    own secret, which this server has no other way to know — before per-account
+    secrets, a tenant with their own app could connect successfully and then
+    have every single delivery rejected, with nothing on screen explaining why.
+
+    The two server-wide secrets stay in the list as a fallback, so deployments
+    that share one Meta app across tenants keep working untouched. Instagram
+    Login signs with its own app secret rather than the Meta one, and the only
+    thing that would say which product sent this is inside the body we have not
+    authenticated yet — so every candidate is tried rather than trusting
+    unverified content to pick one.
     """
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     provided = signature_header[len("sha256="):]
-    for app_secret in (settings.META_APP_SECRET, settings.INSTAGRAM_APP_SECRET):
-        if not app_secret:
+    candidates = [*app_secrets, settings.META_APP_SECRET, settings.INSTAGRAM_APP_SECRET]
+    seen: set[str] = set()
+    for app_secret in candidates:
+        if not app_secret or app_secret in seen:
             continue
+        seen.add(app_secret)
         expected = hmac.new(app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
         if hmac.compare_digest(expected, provided):
             return True
     return False
+
+
+def account_app_secret(account: ChannelAccount) -> Optional[str]:
+    """The Meta app secret stored against one connected account, if any.
+
+    Lives here rather than in the repository because the credential blob is the
+    channel layer's format, and because a decryption failure must be a missing
+    secret rather than a 500 on the webhook path — a broken record for one
+    account should not stop deliveries for every other one.
+    """
+    try:
+        credentials = json.loads(decrypt_api_key(account.encrypted_credentials))
+    except Exception:
+        logger.warning("Could not read credentials for channel account %s", account.id)
+        return None
+    secret = credentials.get("app_secret")
+    return secret if isinstance(secret, str) and secret else None
 
 
 def verify_challenge(mode: Optional[str], token: Optional[str], challenge: Optional[str]) -> Optional[str]:
@@ -178,7 +245,8 @@ async def graph_post_json(path: str, access_token: str, payload: dict) -> tuple[
     return await _graph_request("POST", path, access_token, json_body=payload)
 
 
-async def debug_token(input_token: str) -> tuple[bool, dict]:
+async def debug_token(input_token: str, app_id: Optional[str] = None,
+                      app_secret: Optional[str] = None) -> tuple[bool, dict]:
     """Inspect a token: what it is, who it belongs to, and whether it is ours.
 
     Returns Meta's `data` object, which for a Page token carries
@@ -191,7 +259,12 @@ async def debug_token(input_token: str) -> tuple[bool, dict]:
     — unrelated to messaging, and absent from a token that can nonetheless send
     perfectly well.
     """
-    app_token = f"{settings.META_APP_ID}|{settings.META_APP_SECRET}"
+    # Graph will only inspect a token with credentials from the app that issued
+    # it. A customer running their own Meta app therefore cannot be checked with
+    # ours — the call comes back "The token provided must be an app token or
+    # matching user token", which reads as a bad token rather than the app
+    # mismatch it is. Their own credentials, when supplied, avoid that entirely.
+    app_token = f"{app_id or settings.META_APP_ID}|{app_secret or settings.META_APP_SECRET}"
     ok, data = await _graph_request("GET", "debug_token", app_token,
                                     params={"input_token": input_token})
     if not ok:
@@ -406,7 +479,18 @@ class MetaBaseAdapter(ChannelAdapter):
     expired_status: ClassVar[WindowStatus] = WindowStatus.UNDELIVERABLE
 
     async def verify_webhook(self, headers: dict, raw_body: bytes, account: Optional[ChannelAccount]) -> bool:
-        return verify_meta_signature(raw_body, headers.get("x-hub-signature-256", ""))
+        """Check the signature, preferring the account's own app secret.
+
+        Callers that already resolved the account get the precise check; the
+        server-wide secrets remain as a fallback inside verify_meta_signature.
+        """
+        app_secrets = []
+        if account is not None:
+            secret = account_app_secret(account)
+            if secret:
+                app_secrets.append(secret)
+        return verify_meta_signature(
+            raw_body, headers.get("x-hub-signature-256", ""), app_secrets)
 
     def check_delivery_window(self, conversation: ChannelConversation) -> WindowStatus:
         last_inbound = conversation.last_inbound_at

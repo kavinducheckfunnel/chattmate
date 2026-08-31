@@ -90,6 +90,13 @@ services:
       EMBEDDING_SEQUENTIAL_FALLBACK: "true"
       HF_HOME: /app/.cache/huggingface
       HF_HUB_CACHE: /app/.cache/huggingface/hub
+      # fastembed defaults to /tmp/fastembed_cache, which is the container's
+      # writable layer — so the 65MB embedding model was thrown away on every
+      # deploy and re-downloaded from HuggingFace on the next embed. HuggingFace
+      # now rate-limits this server's IP (HTTP 429), which turned that into
+      # knowledge ingestion that worked or failed depending on how recently the
+      # stack had been restarted. Pointed at the existing persistent volume.
+      FASTEMBED_CACHE_PATH: /app/.cache/huggingface/fastembed
       HF_HUB_DISABLE_TELEMETRY: "1"
       TORCH_HOME: /app/.cache/torch
       OMP_NUM_THREADS: "1"
@@ -139,6 +146,13 @@ services:
       EMBEDDING_SEQUENTIAL_FALLBACK: "true"
       HF_HOME: /app/.cache/huggingface
       HF_HUB_CACHE: /app/.cache/huggingface/hub
+      # fastembed defaults to /tmp/fastembed_cache, which is the container's
+      # writable layer — so the 65MB embedding model was thrown away on every
+      # deploy and re-downloaded from HuggingFace on the next embed. HuggingFace
+      # now rate-limits this server's IP (HTTP 429), which turned that into
+      # knowledge ingestion that worked or failed depending on how recently the
+      # stack had been restarted. Pointed at the existing persistent volume.
+      FASTEMBED_CACHE_PATH: /app/.cache/huggingface/fastembed
       HF_HUB_DISABLE_TELEMETRY: "1"
       TORCH_HOME: /app/.cache/torch
       OMP_NUM_THREADS: "1"

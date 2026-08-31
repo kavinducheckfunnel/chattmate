@@ -109,9 +109,49 @@ you get unreadable ciphertext. Keep a copy somewhere other than the VPS.
 docker run --rm -i -v chattermate_uploads:/data -w /data alpine:3 tar xzf - < uploads-<stamp>.tar.gz
 ```
 
-> ⚠️ **Backups currently live only on this VPS.** A disk failure loses both the
-> database and its backups. Set `OFFSITE_RCLONE_REMOTE` in
-> `/etc/chattermate-backup.env` to fix this — see *Open items* below.
+> ⚠️ **The host cron's backups live only on this VPS.** A disk failure loses both
+> the database and its backups. Either set `OFFSITE_RCLONE_REMOTE` in
+> `/etc/chattermate-backup.env`, or use the console's OneDrive destination below.
+
+### Console backups (Backups & recovery)
+
+The operator console has its own backup path, independent of the host cron above.
+It produces a single encrypted archive rather than three files:
+
+```
+chattermate-backup-<stamp>.cmbk
+  database.dump   pg_dump custom format
+  uploads/        attachments and knowledge files
+  RESTORE.txt     the instructions, inside the archive
+```
+
+Two destinations: **Download to local computer** (built, streamed once, then
+deleted from the server) and **Microsoft OneDrive**, which also runs on a
+schedule set in the console.
+
+**The archive is encrypted with a key derived from `ENCRYPTION_KEY`.** That is
+what makes it safe to hand to Microsoft — what lands in OneDrive is ciphertext,
+so a compromised Microsoft account yields nothing readable. It is also why the
+same warning as above applies twice over: **keep `ENCRYPTION_KEY` somewhere other
+than this VPS**, or the archives cannot be opened at all.
+
+To restore one:
+
+```bash
+ENCRYPTION_KEY=... python backend/scripts/restore_backup.py backup.cmbk --out backup.tar.gz
+tar xzf backup.tar.gz
+pg_restore --clean --if-exists --no-owner --no-acl -d "$DATABASE_URL" database.dump
+```
+
+`restore_backup.py` imports nothing from the application on purpose — it runs
+from a checkout on a laptop when this server no longer exists. It refuses to
+write anything if the archive was truncated or modified, or if the key is wrong.
+
+**Connecting OneDrive** needs a Microsoft Entra app registration with the
+`Files.ReadWrite.All` **application** permission and admin consent granted.
+Delegated permission is not enough — an unattended 02:00 upload has no browser to
+sign in with. `Connect & test` writes a probe file into the destination folder and
+deletes it, so a read-only grant fails there rather than at 02:00.
 
 ---
 

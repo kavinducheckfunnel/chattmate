@@ -21,7 +21,7 @@ os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_apps, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, token, lead_capture, people, tickets, account_auth, usage, platform_admin, platform_insights, platform_manage, platform_ai
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_apps, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, token, lead_capture, people, tickets, account_auth, usage, platform_admin, platform_insights, platform_manage, platform_ai, platform_backup
 from app.api import help_center as help_center_api
 from app.api import help_center_images
 from app.api import channels as channels_api
@@ -95,6 +95,11 @@ async def startup_event():
     # Start chat auto-closer background task, AI chat will auto close after 1 day
     from app.workers.chat_auto_closer import run_auto_closer_loop
     asyncio.create_task(run_auto_closer_loop())
+
+    # Scheduled platform backups. Guarded by a Postgres advisory lock inside the
+    # loop, so running more than one API worker cannot produce two uploads.
+    from app.workers.backup_scheduler import run_backup_scheduler_loop
+    asyncio.create_task(run_backup_scheduler_loop())
 
 # Include routers
 app.include_router(
@@ -206,6 +211,15 @@ app.include_router(
 # platform_admin's /tenants/{id} wildcard is not at stake here.
 app.include_router(
     platform_ai.router,
+    prefix=f"{settings.API_V1_STR}/platform",
+    tags=["platform"]
+)
+
+# Backups and recovery. Registered after platform_ai for the same reason: these
+# paths are literal (/backups...), so platform_admin's /tenants/{id} wildcard
+# cannot swallow them.
+app.include_router(
+    platform_backup.router,
     prefix=f"{settings.API_V1_STR}/platform",
     tags=["platform"]
 )

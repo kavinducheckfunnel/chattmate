@@ -26,6 +26,7 @@ from .feature import (
 from .platform_audit import PlatformAuditLog
 from .platform_metric import PlatformMetric
 from .platform_ai import PlatformAIConfig
+from .platform_backup import PlatformBackupRun, PlatformBackupSettings
 from .plan_snapshot import OrganizationPlanSnapshot
 from .usage import UsageCounter, current_period
 from .customer import Customer

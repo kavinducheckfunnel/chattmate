@@ -170,6 +170,8 @@ const channelsService = {
     phone_number_id: string
     access_token: string
     waba_id?: string
+    /** This account's own Meta app secret — what signs its inbound webhooks. */
+    app_secret?: string
   }): Promise<ChannelAccount> {
     const response = await api.post('/channels/meta/whatsapp', payload)
     return response.data
@@ -202,7 +204,13 @@ const channelsService = {
   },
 
   /** Connect a Facebook Page for Messenger (manual page token) */
-  async connectMessenger(payload: { page_id: string; page_access_token: string }): Promise<ChannelAccount> {
+  async connectMessenger(payload: {
+    page_id: string
+    page_access_token: string
+    app_secret?: string
+    /** Only needed when the Page token came from the customer's own Meta app. */
+    app_id?: string
+  }): Promise<ChannelAccount> {
     const response = await api.post('/channels/meta/messenger', payload)
     return response.data
   },
@@ -234,7 +242,11 @@ const channelsService = {
   },
 
   /** Connect an Instagram professional account (via its linked page token) */
-  async connectInstagram(payload: { ig_id: string; page_access_token: string }): Promise<ChannelAccount> {
+  async connectInstagram(payload: {
+    ig_id: string
+    page_access_token: string
+    app_secret?: string
+  }): Promise<ChannelAccount> {
     const response = await api.post('/channels/meta/instagram', payload)
     return response.data
   },

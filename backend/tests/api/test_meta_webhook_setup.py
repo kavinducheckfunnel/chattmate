@@ -82,10 +82,14 @@ def test_missing_app_secret_is_reported(monkeypatch, configured):
     The handshake still succeeds without an app secret, so the connection looks
     healthy — and then every delivered message fails its signature check and is
     dropped, with nothing on screen to explain it.
+
+    Since accounts carry their own app secret, this is no longer a server the
+    customer cannot fix: the message has to point at the field in front of them
+    rather than at an environment variable they have no access to.
     """
     monkeypatch.setattr(configured, "META_APP_SECRET", "your_meta_app_secret", raising=False)
     problems = _webhook_setup_problems("https://chat.example.com")
-    assert any("META_APP_SECRET" in p for p in problems)
+    assert any("App secret" in p and "your own Meta app" in p for p in problems)
 
 
 @pytest.mark.parametrize("value,expected", [

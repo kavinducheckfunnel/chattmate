@@ -88,6 +88,28 @@ class ChannelAccountRepository:
             logger.error(f"Error getting channel account by external id: {str(e)}")
             return None
 
+    def list_by_external_ids(self, channel_types: List[str],
+                             external_account_ids) -> List[ChannelAccount]:
+        """Accounts matching any of these external ids, across several channels.
+
+        One query for the whole webhook body. Inactive accounts are included on
+        purpose: this is used to pick candidate signature keys, and a delivery
+        for a paused account must still be authenticated before it is discarded
+        — rejecting it as unsigned would report a security failure where there
+        is only a disabled channel.
+        """
+        ids = [str(value) for value in external_account_ids if value]
+        if not ids:
+            return []
+        try:
+            return self.db.query(ChannelAccount).filter(
+                ChannelAccount.channel_type.in_(channel_types),
+                ChannelAccount.external_account_id.in_(ids),
+            ).all()
+        except Exception as e:
+            logger.error(f"Error listing channel accounts by external ids: {str(e)}")
+            return []
+
     def list_by_org(self, organization_id: UUID, channel_type: Optional[str] = None) -> List[ChannelAccount]:
         try:
             query = self.db.query(ChannelAccount).filter(

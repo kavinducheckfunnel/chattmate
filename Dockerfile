@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+
 # Install Python dependencies. Bump pip's per-request timeout and retry count so
 # the large torch/opencv/onnxruntime wheel downloads survive slow links and the
 # heavier amd64/x86_64 wheels don't abort with ReadTimeoutError.
@@ -38,6 +39,35 @@ RUN playwright install --with-deps chromium && \
 p = sync_playwright().start(); \
 b = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage']); \
 b.close(); p.stop(); print('chromium launch verified')"
+
+# pg_dump, for the operator console's Backups & recovery page.
+#
+# From PGDG rather than Debian: bookworm ships postgresql-client 15, and pg_dump
+# refuses to dump a server newer than itself — this stack runs Postgres 16 (see
+# Dockerfile.postgres), so the Debian package produces "server version 16.x;
+# pg_dump version 15.x" and no backup at all. The major version here must track
+# Dockerfile.postgres.
+#
+# Placed after the Python and browser layers on purpose. It is a small, entirely
+# independent apt install, and putting it earlier invalidates the pip and
+# Chromium layers above — turning a one-minute rebuild into a full one, on a
+# 2 vCPU box that is also serving a live application.
+#
+# No gnupg: the key is fetched as ASCII armour and referenced with signed-by, so
+# apt reads it directly and there is nothing to import.
+#
+# The version check at the end is deliberate, for the same reason as the Chromium
+# launch check above: a missing binary must fail the build, not the 02:00 backup.
+RUN install -d /usr/share/postgresql-common/pgdg && \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc && \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends postgresql-client-16 && \
+    rm -rf /var/lib/apt/lists/* && \
+    pg_dump --version
 
 # Node.js + npx and uv/uvx for STDIO MCP servers (npx @elastic/mcp-server-…,
 # uvx mcp-server-…). Copied from the official images instead of apt, which

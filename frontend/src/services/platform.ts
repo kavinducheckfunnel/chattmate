@@ -695,3 +695,122 @@ export interface BillingOverview {
 
 export const getPlatformBilling = async (period?: string): Promise<BillingOverview> =>
   (await api.get<BillingOverview>('/platform/billing', { params: period ? { period } : {} })).data
+
+// ---------------------------------------------------------------- backups
+
+export interface BackupConnection {
+  tenant_id: string
+  client_id: string
+  /** The secret itself is never sent back — only whether one is stored. */
+  has_client_secret: boolean
+  account_email: string
+  folder: string
+  is_configured: boolean
+  is_connected: boolean
+  connected_at: string | null
+  last_error: string | null
+}
+
+export interface BackupSchedule {
+  enabled: boolean
+  frequency: 'daily' | 'weekly' | 'monthly'
+  /** 0 = Monday … 6 = Sunday, matching Python's datetime.weekday(). */
+  weekday: number
+  day_of_month: number
+  backup_time: string
+  timezone: string
+  contents: 'database_and_files' | 'database_only'
+  last_run_at: string | null
+  next_run_at: string | null
+}
+
+export interface BackupRun {
+  id: string
+  created_at: string | null
+  finished_at: string | null
+  method: 'scheduled' | 'manual' | 'local'
+  contents: 'database_and_files' | 'database_only'
+  destination: string
+  size_bytes: number | null
+  status: 'running' | 'uploaded' | 'downloaded' | 'ready' | 'failed' | 'expired'
+  error: string | null
+  filename: string | null
+  web_url: string | null
+  is_downloadable: boolean
+  actor_email: string | null
+}
+
+export interface BackupOverview {
+  connection: BackupConnection
+  schedule: BackupSchedule
+  history: BackupRun[]
+  server: {
+    timezone: string
+    disk_free_bytes: number | null
+    /** False when the image has no pg_dump — the page says so instead of offering a button that cannot work. */
+    can_dump: boolean
+  }
+  /** Present only on the response to a prepare call. */
+  prepared?: BackupRun
+}
+
+export const getBackups = async (): Promise<BackupOverview> =>
+  (await api.get<BackupOverview>('/platform/backups')).data
+
+export const saveBackupConnection = async (input: {
+  tenant_id: string
+  client_id: string
+  /** Omit to keep the stored secret; sending '' would not clear it either. */
+  client_secret?: string
+  account_email: string
+  folder: string
+}): Promise<BackupOverview> =>
+  (await api.put<BackupOverview>('/platform/backups/onedrive', input)).data
+
+export const testBackupConnection = async (): Promise<BackupOverview> =>
+  (await api.post<BackupOverview>('/platform/backups/onedrive/test')).data
+
+export const disconnectBackups = async (): Promise<BackupOverview> =>
+  (await api.delete<BackupOverview>('/platform/backups/onedrive')).data
+
+export const saveBackupSchedule = async (input: {
+  enabled: boolean
+  frequency: string
+  weekday: number
+  day_of_month: number
+  backup_time: string
+  timezone: string
+  contents: string
+}): Promise<BackupOverview> =>
+  (await api.put<BackupOverview>('/platform/backups/schedule', input)).data
+
+export const runBackupNow = async (): Promise<BackupOverview> =>
+  (await api.post<BackupOverview>('/platform/backups/run')).data
+
+export const prepareLocalBackup = async (contents: string): Promise<BackupOverview> =>
+  (await api.post<BackupOverview>('/platform/backups/local', { contents })).data
+
+/**
+ * Pull a prepared archive through the authenticated client and hand it to the
+ * browser as a save.
+ *
+ * A plain link cannot be used: the route is cookie-authenticated *and* the
+ * server deletes its copy the moment the response completes, so a link that
+ * 401s or that the browser retries would consume the one delivery. Fetching as
+ * a blob keeps that in one place we control.
+ */
+export const downloadLocalBackup = async (runId: string, filename: string): Promise<void> => {
+  const response = await api.get(`/platform/backups/local/${runId}/download`, {
+    responseType: 'blob',
+  })
+  const url = URL.createObjectURL(response.data as Blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  // Revoked on the next tick, not immediately: Safari cancels an in-flight
+  // download whose object URL has already been released.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}

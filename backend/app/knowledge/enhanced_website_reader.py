@@ -29,7 +29,10 @@ from bs4 import BeautifulSoup, Tag
 import httpx
 
 from agno.document.base import Document
+from agno.document.chunking.fixed import FixedSizeChunking
+from agno.document.chunking.strategy import ChunkingStrategy
 from agno.document.reader.website_reader import WebsiteReader
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.knowledge.crawl4ai_fallback import get_crawl4ai_fallback
 from app.knowledge.content_summarizer import get_content_summarizer
@@ -57,6 +60,40 @@ class EmptyCrawlError(Exception):
     A run that indexes nothing is a failure, not a success: without this the queue
     item completes and the source appears in the dashboard as a healthy source with
     zero pages, so nobody learns the agent has no content to answer from."""
+
+
+# Extensions that are never a readable page.
+#
+# The previous list held ".jpg" but not ".jpeg", and matched case-sensitively.
+# That is how a 766KB Nikon D850 photograph was fetched, decoded as text and
+# stored as a knowledge document: the crawler indexed the raw JFIF bytes, and
+# the agent then had a third of a megabyte of binary in its search index.
+#
+# Lower-cased before matching, and compared against a tuple so str.endswith does
+# the whole set in one pass. This is only a cheap pre-filter that avoids the
+# fetch — the authoritative check is the Content-Type guard in _fetch, because a
+# URL with no extension at all can still serve an image.
+NON_PAGE_EXTENSIONS = (
+    # images
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".svg", ".bmp", ".tiff",
+    ".tif", ".ico", ".heic",
+    # documents handled by their own readers, or not at all
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".rtf",
+    # archives and binaries
+    ".zip", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".exe", ".dll", ".dmg",
+    ".pkg", ".deb", ".rpm", ".bin", ".iso",
+    # media
+    ".mp3", ".mp4", ".m4a", ".m4v", ".wav", ".ogg", ".webm", ".avi", ".mov",
+    ".wmv", ".flv", ".mkv",
+    # front-end assets
+    ".css", ".js", ".mjs", ".map", ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    # data feeds that are not prose
+    ".json", ".xml", ".rss", ".atom", ".csv",
+)
+
+# Content types worth parsing as a page. Anything else is skipped even if the
+# URL looked like a page.
+READABLE_CONTENT_TYPES = ("text/html", "application/xhtml", "text/plain")
 
 
 @dataclass
@@ -100,6 +137,29 @@ class EnhancedWebsiteReader(WebsiteReader):
     respect_robots_txt: bool = True  # Whether to respect robots.txt
     max_workers: int = 10  # Maximum number of parallel workers for crawling
     verify_ssl: bool = True  # Whether to verify SSL certificates (set to False for self-signed certs)
+
+    # Splitting is not optional here, and the size is not a matter of taste.
+    #
+    # This reader produced one Document per crawled page and handed it straight
+    # to the embedder. FASTEMBED_MODEL accepts 512 tokens and silently drops the
+    # rest, so a 31KB page — the average on the sites indexed so far — was stored
+    # as a vector representing only its first ~1,300 characters. On a typical
+    # site that prefix is the navigation menu, which is why search returned
+    # confident nonsense: every page embedded to roughly "logo, Home, About,
+    # Contact" and nothing a customer actually asked about was ever in the index.
+    #
+    # chunking_strategy is set here rather than left None on purpose.
+    # AgentKnowledge's validator fills a None strategy in from its own default
+    # (FixedSizeChunking(chunk_size=5000)), which is ~4x over the token limit —
+    # so leaving it unset would re-introduce the same silent truncation through
+    # the back door.
+    chunk_size: int = settings.KB_CHUNK_SIZE
+    chunking_strategy: Optional[ChunkingStrategy] = field(
+        default_factory=lambda: FixedSizeChunking(
+            chunk_size=settings.KB_CHUNK_SIZE,
+            overlap=settings.KB_CHUNK_OVERLAP,
+        )
+    )
     
     # Track crawling statistics
     _crawled_pages_count: int = 0
@@ -593,7 +653,22 @@ class EnhancedWebsiteReader(WebsiteReader):
                     response = safe_get(client, current_url)
                     logger.info(f"Received response: status={response.status_code}, url={response.url}")
                     response.raise_for_status()
-                    
+
+                    # What the server says it sent, not what the URL implied.
+                    # httpx will happily decode a JPEG into a str of replacement
+                    # characters, and BeautifulSoup will happily parse it — the
+                    # result is a "page" of binary noise that embeds to nothing
+                    # and pollutes every future search. Extensions cannot catch
+                    # this on their own: plenty of asset URLs carry none.
+                    content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+                    if content_type and not content_type.startswith(READABLE_CONTENT_TYPES):
+                        logger.info(
+                            f"Skipping {current_url}: Content-Type {content_type} is not a readable page")
+                        # Bare None, matching this function's other early exits —
+                        # it returns Optional[Tuple[str, str, List[str]]], so a
+                        # 2-tuple here would unpack wrongly in the caller.
+                        return None
+
                 # Parse HTML with BeautifulSoup
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
@@ -1046,9 +1121,7 @@ class EnhancedWebsiteReader(WebsiteReader):
 
             if (
                 is_same_domain
-                and not any(parsed_url.path.endswith(ext) for ext in [
-                    ".pdf", ".jpg", ".png", ".gif", ".zip", ".mp3", ".mp4", ".exe", ".dll"
-                ])
+                and not parsed_url.path.lower().endswith(NON_PAGE_EXTENSIONS)
                 and not parsed_url.path.startswith("#")  # Skip anchors
             ):
                 seen.add(full_url)
@@ -1141,16 +1214,27 @@ class EnhancedWebsiteReader(WebsiteReader):
         # Create a callback for immediate document processing
         def on_document_created(page_url: str, content: str):
             index = len(documents) + 1
-            document = self._create_document_from_content(page_url, content, url, index)
-            documents.append(document)
-            
-            # Call vector DB callback if provided
+            page = self._create_document_from_content(page_url, content, url, index)
+
+            # Split before embedding — see chunk_size above. FixedSizeChunking
+            # gives each piece its own id (`{page_url}_{n}`), so upserting them
+            # does not collapse a page back into a single row.
+            chunks = self.chunk_document(page) if self.chunk else [page]
+            documents.extend(chunks)
+            if len(chunks) > 1:
+                logger.info(
+                    f"Split {page_url} ({len(page.content)} chars) into {len(chunks)} chunks")
+
+            # Each chunk is sent separately, and one failure does not abandon the
+            # rest of the page: a partially indexed page still answers questions
+            # about the parts that made it in.
             if vector_db_callback:
-                try:
-                    vector_db_callback(document)
-                    logger.info(f"✓ Document {document.id} successfully sent to vector DB")
-                except Exception as e:
-                    logger.error(f"Error sending document {document.id} to vector DB: {str(e)}")
+                for chunk in chunks:
+                    try:
+                        vector_db_callback(chunk)
+                    except Exception as e:
+                        logger.error(f"Error sending chunk {chunk.id} to vector DB: {str(e)}")
+                logger.info(f"✓ {len(chunks)} chunk(s) from {page_url} sent to vector DB")
         
         # Crawl website with the callback for immediate document processing
         self.crawl(url, on_document_callback=on_document_created, on_url_crawled_callback=url_crawled_callback)

@@ -77,6 +77,10 @@ const META_FORMS = {
     fields: [
       { key: 'phone_number_id', label: 'Phone number ID', placeholder: '1234567890', secret: false },
       { key: 'access_token', label: 'Access token', placeholder: 'EAAG…', secret: true },
+      // Signs the webhooks Meta sends for this number. Required, and asked for
+      // here rather than read from server config, because each customer's own
+      // Meta app has its own secret — a shared one cannot verify their traffic.
+      { key: 'app_secret', label: 'App secret', placeholder: '32 hex characters, from Settings → Basic', secret: true },
       { key: 'waba_id', label: 'WhatsApp Business Account ID (optional)', placeholder: 'for webhook auto-subscribe', secret: false },
     ],
   },
@@ -87,6 +91,11 @@ const META_FORMS = {
     fields: [
       { key: 'page_id', label: 'Facebook Page ID', placeholder: '1234567890', secret: false },
       { key: 'page_access_token', label: 'Page access token', placeholder: 'EAAG…', secret: true },
+      { key: 'app_secret', label: 'App secret', placeholder: '32 hex characters, from Settings → Basic', secret: true },
+      // Graph will only inspect a Page token using credentials from the app that
+      // issued it, so a customer's own app needs its ID here for the token check
+      // to pass. Optional: blank falls back to the server's shared app.
+      { key: 'app_id', label: 'App ID (optional)', placeholder: 'needed if the token is from your own Meta app', secret: false },
     ],
   },
   instagram: {
@@ -96,6 +105,7 @@ const META_FORMS = {
     fields: [
       { key: 'ig_id', label: 'Instagram account ID', placeholder: '17841400000000000', secret: false },
       { key: 'page_access_token', label: 'Linked page access token', placeholder: 'EAAG…', secret: true },
+      { key: 'app_secret', label: 'App secret', placeholder: '32 hex characters, from Settings → Basic', secret: true },
     ],
   },
 } as const
