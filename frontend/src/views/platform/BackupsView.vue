@@ -47,7 +47,7 @@ const tenantId = ref('')
 const clientId = ref('')
 const clientSecret = ref('')
 const accountEmail = ref('')
-const folder = ref('/ChatterMate Backups')
+const folder = ref('/Growmiq mini Backups')
 const connecting = ref(false)
 const disconnecting = ref(false)
 
@@ -176,7 +176,7 @@ const connectAndTest = async () => {
       // Omitted when untouched, which the server reads as "keep the stored one".
       ...(clientSecret.value.trim() ? { client_secret: clientSecret.value.trim() } : {}),
       account_email: accountEmail.value.trim(),
-      folder: folder.value.trim() || '/ChatterMate Backups',
+      folder: folder.value.trim() || '/Growmiq mini Backups',
     })
     apply(await testBackupConnection())
     notice.value = 'Connected. A test file was written to the destination folder and removed.'
