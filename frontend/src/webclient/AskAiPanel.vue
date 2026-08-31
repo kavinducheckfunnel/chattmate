@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
 
         <div class="askai__foot">
             <span v-if="disclaimer">{{ disclaimer }}</span>
-            <a class="askai__brand" href="https://chattermate.chat" target="_blank" rel="noopener noreferrer">Powered by ChatterMate</a>
+            <a class="askai__brand" href="https://chattermate.chat" target="_blank" rel="noopener noreferrer">Powered by Growmiq mini</a>
         </div>
     </div>
 </template>

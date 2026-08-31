@@ -1531,7 +1531,7 @@ window.chattermateConfig;
       footerText.target = '_blank';
       footerText.rel = 'noopener noreferrer';
       footerText.className = 'chattermate-error-footer-link';
-      footerText.textContent = 'Powered by ChatterMate';
+      footerText.textContent = 'Powered by Growmiq mini';
       footer.appendChild(logoSvg);
       footer.appendChild(footerText);
 
