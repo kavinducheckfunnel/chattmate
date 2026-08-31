@@ -69,11 +69,19 @@ class KnowledgeSearchByAgent(Toolkit):
                 if self.agent_knowledge is None:
                     # Use the first knowledge source's table and schema since they should all be in the same table
                     source = knowledge_sources[0]
-                    embedder = FastEmbedEmbedder(
-                         # Use configurable model ID from settings
-                    )
-                    # Updated dimensions for the model (all-MiniLM-L6-v2 uses 384 dimensions)
-                    
+                    # MUST be the same model the ingestion side embedded with
+                    # (app/knowledge/knowledge_base.py passes the same setting).
+                    # This used to construct FastEmbedEmbedder() bare and rely on
+                    # agno's default happening to match FASTEMBED_MODEL's default.
+                    # Both are BAAI/bge-small-en-v1.5 today, so it worked by
+                    # coincidence — but setting FASTEMBED_MODEL, which reads like
+                    # a supported knob, silently split the write and read paths
+                    # into two different vector spaces. Nothing would error: the
+                    # popular alternatives are also 384-dimensional, so the query
+                    # embeds fine, the cosine distances are just meaningless, and
+                    # retrieval quietly returns near-random chunks forever.
+                    embedder = FastEmbedEmbedder(id=settings.FASTEMBED_MODEL)
+
                     # Initialize vector db with simpler search type to avoid connection issues
                     vector_db = PgVector(
                         table_name=source.table_name,
@@ -123,10 +131,36 @@ class KnowledgeSearchByAgent(Toolkit):
                 # Sort by similarity and format results
                 search_results.sort(key=lambda x: x['similarity'], reverse=True)
 
-                # Record structured citations (deduped by name+type) so the chat agent
-                # can surface them to the widget.
+                # Spend the character budget best-match-first, so a tight budget
+                # costs the least relevant chunk rather than truncating the best
+                # one mid-sentence. Without a ceiling here, three large chunks
+                # push the follow-up completion past the model's request limit
+                # and the whole answer is lost — retrieval succeeds and the
+                # visitor still gets "I encountered an error". A partial set of
+                # evidence the model can actually read beats a complete set it
+                # cannot.
+                budget = settings.KNOWLEDGE_RESULT_CHAR_BUDGET
+                formatted_results = []
+                # Cite only what actually reached the model. Recording a source
+                # whose chunk was then dropped shows the visitor a reference the
+                # answer was never grounded in.
                 seen = {(s['name'], s['type']) for s in self.collected_sources}
                 for result in search_results:
+                    if budget <= 0:
+                        break
+                    prefix = f"[{result['source_type'].upper()} - {result['name']}] "
+                    content = result['content']
+                    room = budget - len(prefix)
+                    if room <= 0:
+                        break
+                    if len(content) > room:
+                        # room - 1 leaves space for the ellipsis itself, so the
+                        # emitted chunk lands inside the budget rather than one
+                        # character past it.
+                        content = content[:room - 1].rstrip() + "…"
+                    formatted_results.append(prefix + content)
+                    budget -= len(prefix) + len(content)
+
                     key = (result['name'], result['source_type'])
                     if key not in seen:
                         seen.add(key)
@@ -135,11 +169,13 @@ class KnowledgeSearchByAgent(Toolkit):
                             'type': result['source_type'],
                         })
 
-                # Return all results (already limited to 3)
-                formatted_results = []
-                for result in search_results:
-                    formatted_results.append(
-                        f"[{result['source_type'].upper()} - {result['name']}] {result['content']}")
+                if len(formatted_results) < len(search_results):
+                    logger.info(
+                        f"Knowledge results trimmed to {len(formatted_results)} of "
+                        f"{len(search_results)} chunks to stay within the "
+                        f"{settings.KNOWLEDGE_RESULT_CHAR_BUDGET}-character budget"
+                    )
+
                 logger.debug(f"Formatted results: {formatted_results}")
                 return "\n\n".join(formatted_results)
 

@@ -809,3 +809,105 @@ def test_real_search_knowledge_base_no_sources_real():
 
         # Should return no sources message
         assert "No knowledge sources available for this agent" in result
+
+def _make_tool_with_docs(docs, char_budget=None, fastembed_model=None):
+    """Build a real KnowledgeSearchByAgent whose vector search returns `docs`.
+
+    Returns (tool, search_result, embedder_mock).
+    """
+    agent_id = str(uuid4())
+    org_id = uuid4()
+
+    with patch('app.tools.knowledge_search_byagent.SessionLocal') as mock_session_local, \
+         patch('app.tools.knowledge_search_byagent.KnowledgeRepository') as mock_repo_class, \
+         patch('app.tools.knowledge_search_byagent.PgVector'), \
+         patch('app.tools.knowledge_search_byagent.AgentKnowledge') as mock_ak_class, \
+         patch('app.tools.knowledge_search_byagent.FastEmbedEmbedder') as mock_embedder, \
+         patch('app.tools.knowledge_search_byagent.settings') as mock_settings:
+
+        mock_session_local.return_value.__enter__.return_value = MagicMock()
+        mock_session_local.return_value.__exit__.return_value = None
+
+        mock_settings.DATABASE_URL = "postgresql://x/y"
+        mock_settings.FASTEMBED_MODEL = fastembed_model or "BAAI/bge-small-en-v1.5"
+        mock_settings.KNOWLEDGE_RESULT_CHAR_BUDGET = (
+            4000 if char_budget is None else char_budget)
+
+        knowledge = MagicMock()
+        knowledge.source = "test.pdf"
+        knowledge.source_type = SourceType.FILE
+        knowledge.table_name = "t"
+        knowledge.schema = "s"
+        mock_repo_class.return_value.get_by_agent.return_value = [knowledge]
+
+        mock_ak_class.return_value.search.return_value = docs
+
+        tool = KnowledgeSearchByAgent(agent_id=agent_id, org_id=org_id)
+        result = tool.search_knowledge_base("q")
+        return tool, result, mock_embedder
+
+
+def _doc(name, content, score):
+    d = MagicMock()
+    d.name = name
+    d.content = content
+    d.score = score
+    return d
+
+
+def test_knowledge_results_stay_within_char_budget():
+    """A large knowledge base must not blow the model's request budget.
+
+    Retrieval succeeding while the completion carrying its results is refused
+    is the failure this guards: the visitor gets a generic apology and the
+    answer stays unread in the knowledge base.
+    """
+    docs = [_doc("test.pdf", "A" * 5000, 0.9), _doc("test.pdf", "B" * 5000, 0.8)]
+    _, result, _ = _make_tool_with_docs(docs, char_budget=1000)
+
+    assert len(result) <= 1000
+    # The best-scoring chunk is the one that survives.
+    assert "A" in result
+    assert "B" not in result
+
+
+def test_knowledge_budget_keeps_best_match_first():
+    """Trimming spends the budget on the highest-scoring chunk, not the first."""
+    docs = [_doc("test.pdf", "LOW" * 400, 0.1), _doc("test.pdf", "HIGH" * 400, 0.99)]
+    _, result, _ = _make_tool_with_docs(docs, char_budget=600)
+
+    assert "HIGH" in result
+    assert "LOW" not in result
+
+
+def test_only_surviving_chunks_are_cited():
+    """A source whose chunk was trimmed away must not be cited.
+
+    Citing it would show the visitor a reference the answer was never
+    grounded in.
+    """
+    docs = [_doc("kept.pdf", "A" * 800, 0.9), _doc("dropped.pdf", "B" * 800, 0.1)]
+    # 818 chars go to the kept chunk; what is left cannot even fit the
+    # second chunk's "[FILE - dropped.pdf] " prefix, so it is dropped whole.
+    tool, result, _ = _make_tool_with_docs(docs, char_budget=830)
+
+    cited = {s['name'] for s in tool.collected_sources}
+    assert "kept.pdf" in cited
+    assert "dropped.pdf" not in cited
+
+
+def test_query_embedder_matches_ingestion_model():
+    """Query-side embedding must use the same model ingestion wrote with.
+
+    Both defaults are BAAI/bge-small-en-v1.5, so a bare FastEmbedEmbedder()
+    worked by coincidence. Setting FASTEMBED_MODEL then split the write and
+    read paths into different vector spaces with no error at all: the popular
+    alternatives are also 384-dimensional, so the query embeds fine and the
+    similarities are simply meaningless.
+    """
+    docs = [_doc("test.pdf", "content", 0.9)]
+    _, _, mock_embedder = _make_tool_with_docs(
+        docs, fastembed_model="sentence-transformers/all-MiniLM-L6-v2")
+
+    mock_embedder.assert_called_once_with(
+        id="sentence-transformers/all-MiniLM-L6-v2")

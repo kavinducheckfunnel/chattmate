@@ -355,6 +355,62 @@ after a config change, that setting has been lost.
 **`connect() failed (111: Connection refused)`** — backend is down or still booting.
 Cold start takes ~30s.
 
+### The agent ignores the knowledge base
+
+Symptom: the bot answers generically, or apologises, and never cites the website
+or documents you added. The instinct is to blame ingestion or the embeddings.
+**Check the model's token budget first — that was the actual cause here.**
+
+Retrieval and the LLM call are separate failures, and the logs tell them apart:
+
+```bash
+dc logs backend | grep -E "Found [0-9]+ documents|Request too large|rate_limit"
+```
+
+* **`Found 3 documents` followed by a 413** — retrieval worked and the
+  *completion carrying its results* was refused. This is the common case.
+* **No `Found` line at all** — the agent never searched; check the source is
+  linked to the agent the widget uses.
+* **`No knowledge sources available`** — the link is missing entirely.
+
+Confirm retrieval independently of the model:
+
+```bash
+docker exec chattermate-backend-1 python -c "
+from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
+import uuid
+t = KnowledgeSearchByAgent(agent_id='<agent-uuid>', org_id=uuid.UUID('<org-uuid>'))
+print(t.search_knowledge_base('a question about your content')[:500])"
+```
+
+Content is there if this prints it. Then the problem is budget, not knowledge.
+
+**Why it happens.** A knowledge-grounded turn is the largest request the agent
+ever makes: system prompt (~1,900 tokens) + three tool schemas + five prior
+exchanges + the retrieved chunks, and Groq's free `on_demand` tier allows
+**8,000 tokens per minute**. Observed requests ran 8,232–9,536 — over by 232 to
+1,536. The run is not retried, so the visitor gets "I encountered an error"
+while the answer sits unread in the knowledge base.
+
+**What the code now does.** `ChatAgent._arun` catches a size rejection and
+retries once with conversation history dropped, which reclaims more than the
+observed overage; `KNOWLEDGE_RESULT_CHAR_BUDGET` (default 4000) caps how much
+retrieved text a single search may return.
+
+**What that does not fix.** The headroom is still thin — even with no history,
+prompt plus tools plus two calls per grounded turn is most of an 8k budget. The
+durable fix is a larger allowance: upgrade the Groq tier, or move the org to a
+model whose limits are not per-minute. Check what an org runs with:
+
+```sql
+SELECT organization_id, model_type, model_name FROM ai_configs WHERE is_active;
+```
+
+**Embedding model.** Ingestion and query must embed with the same model or the
+similarities are meaningless while nothing errors (the usual alternatives are
+all 384-dimensional, so it fails silently). Both read `FASTEMBED_MODEL`; if you
+change it, existing vectors must be re-ingested, not just re-queried.
+
 ### Backend won't start
 
 ```bash

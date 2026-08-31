@@ -453,3 +453,113 @@ async def test_chat_agent_run_timeout(test_organization_id, test_agent, test_use
         assert isinstance(response, ChatResponse)
         assert "error" in response.message.lower()
         assert not response.transfer_to_human 
+
+# ---------------------------------------------------------------------------
+# Context-overflow retry
+#
+# The production failure this covers: the knowledge search succeeded, and the
+# follow-up completion carrying its results was refused for being too large, so
+# the visitor got "I encountered an error" while the answer sat unread in the
+# knowledge base.
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+from app.agents.chat_agent import is_context_overflow
+
+
+def test_is_context_overflow_matches_provider_wording():
+    """Providers disagree on the status code for the same condition."""
+    assert is_context_overflow(Exception(
+        "Error code: 413 - Request too large for model `qwen/qwen3.6-27b` ... "
+        "on tokens per minute (TPM): Limit 8000, Requested 9536, please reduce "
+        "your message size and try again"))
+    assert is_context_overflow(Exception(
+        "This model's maximum context length is 8192 tokens"))
+    assert is_context_overflow(Exception("context_length_exceeded"))
+    assert is_context_overflow(Exception("prompt is too long"))
+
+
+def test_is_context_overflow_ignores_plain_rate_limiting():
+    """Ordinary rate limiting must NOT be retried with less context.
+
+    Sending a smaller prompt does not help when the limit is requests-per-minute
+    — that needs a backoff, and treating it as overflow would silently drop the
+    conversation history for no benefit.
+    """
+    assert not is_context_overflow(Exception(
+        "Rate limit reached for gpt-4 in organization org-x on requests per "
+        "minute (RPM): Limit 3, Used 3. Please try again in 20s"))
+    assert not is_context_overflow(Exception("Connection reset by peer"))
+
+
+@pytest.mark.asyncio
+async def test_arun_retries_without_history_on_overflow():
+    """An overflowing run is retried with history shed, not failed outright."""
+    calls = []
+
+    class FakeAgent:
+        add_history_to_messages = True
+        num_history_responses = 5
+
+        async def arun(self, message, session_id, stream):
+            calls.append(self.add_history_to_messages)
+            if self.add_history_to_messages:
+                raise Exception("Request too large for model `x`, please "
+                                "reduce your message size")
+            return "grounded answer"
+
+    holder = SimpleNamespace(agent=FakeAgent())
+
+    with patch.object(settings, 'AGENT_OVERFLOW_RETRIES', 1):
+        result = await ChatAgent._arun(holder, "what do you sell?", "sess-1")
+
+    assert result == "grounded answer"
+    # First attempt carried history, the retry did not.
+    assert calls == [True, False]
+    # And the downgrade is not left in place for the rest of the session.
+    assert holder.agent.add_history_to_messages is True
+    assert holder.agent.num_history_responses == 5
+
+
+@pytest.mark.asyncio
+async def test_arun_does_not_retry_non_overflow_errors():
+    """A provider outage must surface immediately, not burn a retry."""
+    calls = []
+
+    class FakeAgent:
+        add_history_to_messages = True
+        num_history_responses = 5
+
+        async def arun(self, message, session_id, stream):
+            calls.append(1)
+            raise Exception("Service unavailable")
+
+    holder = SimpleNamespace(agent=FakeAgent())
+
+    with patch.object(settings, 'AGENT_OVERFLOW_RETRIES', 1):
+        with pytest.raises(Exception, match="Service unavailable"):
+            await ChatAgent._arun(holder, "hi", "sess-1")
+
+    assert calls == [1]
+    assert holder.agent.add_history_to_messages is True
+
+
+@pytest.mark.asyncio
+async def test_arun_restores_history_setting_after_a_failing_retry():
+    """Even when the retry also fails, the agent keeps its memory settings."""
+    class FakeAgent:
+        add_history_to_messages = True
+        num_history_responses = 5
+
+        async def arun(self, message, session_id, stream):
+            raise Exception("Request too large for model `x`")
+
+    holder = SimpleNamespace(agent=FakeAgent())
+
+    with patch.object(settings, 'AGENT_OVERFLOW_RETRIES', 1):
+        with pytest.raises(Exception, match="Request too large"):
+            await ChatAgent._arun(holder, "hi", "sess-1")
+
+    assert holder.agent.add_history_to_messages is True
+    assert holder.agent.num_history_responses == 5

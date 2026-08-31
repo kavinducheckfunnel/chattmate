@@ -162,6 +162,23 @@ class Settings(BaseSettings):
     # so the budget can stay tight. AGENT_RUN_TIMEOUT is the real safety net.
     AGENT_TOOL_CALL_LIMIT: int = int(os.getenv("AGENT_TOOL_CALL_LIMIT", "5"))
 
+    # Characters of retrieved knowledge a single search may hand back to the
+    # model. Retrieval itself was never the failure mode — the follow-up
+    # completion carrying the results was, because a small-context or
+    # rate-limited model (Groq's free tier caps at 8k tokens/minute) rejects the
+    # whole request with a 413 and the visitor gets a generic apology instead of
+    # the answer that was sitting in the knowledge base. Budgeting here keeps a
+    # large knowledge base from silently costing the agent its own reply.
+    #
+    # ~4 chars/token, so the default is roughly 1k tokens of evidence.
+    KNOWLEDGE_RESULT_CHAR_BUDGET: int = int(
+        os.getenv("KNOWLEDGE_RESULT_CHAR_BUDGET", "4000"))
+
+    # Retry budget when the provider rejects a request for being too large. The
+    # retry drops history first, then trims knowledge — losing the earlier turns
+    # is a far smaller loss than losing the grounded answer entirely.
+    AGENT_OVERFLOW_RETRIES: int = int(os.getenv("AGENT_OVERFLOW_RETRIES", "1"))
+
     # --- Self-serve multi-tenant signup -------------------------------------
     # Upstream ships POST /organizations locked to a single organization: it
     # 403s once one exists, which makes the community edition a single-tenant

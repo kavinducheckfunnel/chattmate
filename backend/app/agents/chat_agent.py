@@ -176,6 +176,33 @@ def ensure_nonempty_message(response_content: ChatResponse) -> ChatResponse:
     return response_content
 
 
+# Provider wording for "this request is too big to serve". Matched on text
+# because the providers disagree on the status code for the same condition:
+# Groq returns 413 with code `rate_limit_exceeded` for a per-minute token
+# ceiling, OpenAI returns 400 `context_length_exceeded`, Anthropic 413. Keying
+# off the code alone would either miss cases or catch ordinary rate limiting,
+# which must NOT be retried with less context — it needs a backoff instead.
+_OVERFLOW_SIGNATURES = (
+    "request too large",
+    "context_length_exceeded",
+    "context length exceeded",
+    "maximum context length",
+    "reduce your message size",
+    "prompt is too long",
+    "too many tokens",
+)
+
+
+def is_context_overflow(exc: Exception) -> bool:
+    """True when the provider refused because the prompt was too large.
+
+    Distinct from being rate limited: the fix for overflow is to send less, and
+    retrying the identical request would fail identically forever.
+    """
+    text = str(exc).lower()
+    return any(sig in text for sig in _OVERFLOW_SIGNATURES)
+
+
 def _salvage_groq_answer_text(response) -> str | None:
     """The last assistant text produced during the run.
 
@@ -916,6 +943,55 @@ Keep your responses concise and focused. Provide clear, actionable information i
            show_tool_calls=settings.ENVIRONMENT == "development"
           )
 
+    async def _arun(self, message: str, session_id: str = None):
+        """Run the agent, shedding conversation history if the prompt overflows.
+
+        A knowledge-grounded turn is the largest request the agent ever makes:
+        the system prompt, the tool schemas, five prior exchanges AND the
+        retrieved chunks all travel together. On a small-context or
+        token-per-minute-capped model that total is what tips over the limit —
+        so the search succeeds, the completion carrying its results is refused,
+        and the visitor is told there was an error while the answer sits
+        unread in the knowledge base.
+
+        Dropping history is the right thing to give up. The retrieved evidence
+        is what the visitor actually asked about; the earlier turns are context
+        we would rather keep but can lose without losing the answer. Retrying
+        unchanged would fail identically, so this is the only retry worth making.
+        """
+        original_add_history = self.agent.add_history_to_messages
+        original_num_history = self.agent.num_history_responses
+        attempts = max(0, settings.AGENT_OVERFLOW_RETRIES) + 1
+
+        try:
+            for attempt in range(attempts):
+                try:
+                    return await asyncio.wait_for(
+                        self.agent.arun(message=message, session_id=session_id, stream=False),
+                        timeout=settings.AGENT_RUN_TIMEOUT,
+                    )
+                except Exception as exc:
+                    last = attempt == attempts - 1
+                    # Only a history-bearing run has anything to shed; with it
+                    # already off, a retry would send the identical request.
+                    if (last
+                            or not is_context_overflow(exc)
+                            or not self.agent.add_history_to_messages):
+                        raise
+                    logger.warning(
+                        "Prompt too large for the model (%s). Retrying without "
+                        "conversation history so the knowledge-base answer survives.",
+                        type(exc).__name__,
+                    )
+                    self.agent.add_history_to_messages = False
+                    self.agent.num_history_responses = 0
+        finally:
+            # The agent object is reused for the rest of the session, so a
+            # downgrade left in place here would silently cost this
+            # conversation its memory from now on.
+            self.agent.add_history_to_messages = original_add_history
+            self.agent.num_history_responses = original_num_history
+
     async def _get_llm_response_only(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
         """
         Get LLM response without storing messages in chat history.
@@ -949,14 +1025,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
             # Get AI response WITHOUT storing user message
             self._groq_json_capture.clear()
             try:
-                response = await asyncio.wait_for(
-                    self.agent.arun(
-                        message=message,
-                        session_id=session_id,
-                        stream=False
-                    ),
-                    timeout=settings.AGENT_RUN_TIMEOUT
-                )
+                response = await self._arun(message, session_id)
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Agent run timed out after {settings.AGENT_RUN_TIMEOUT}s and was cancelled "
@@ -1334,14 +1403,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 self._groq_json_capture.clear()
                 _salvaged_content = None
                 try:
-                    response = await asyncio.wait_for(
-                        self.agent.arun(
-                            message=message,
-                            session_id=session_id,
-                            stream=False
-                        ),
-                        timeout=settings.AGENT_RUN_TIMEOUT
-                    )
+                    response = await self._arun(message, session_id)
                 except asyncio.TimeoutError:
                     logger.warning(
                         f"Agent run timed out after {settings.AGENT_RUN_TIMEOUT}s and was cancelled "
