@@ -110,12 +110,92 @@ jobs:
       - name: Shell syntax
         run: bash -n scripts/*.sh
 
+  backend-test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      # Checked out WITHOUT submodules on purpose: app/enterprise is private and
+      # absent from this deployment, so the suite must pass the way production
+      # actually runs — community mode.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: python -m pytest tests/ -q --no-cov
+
+  frontend-test:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ./frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm run test:unit -- --run
+
+      - name: Type check
+        run: npm run type-check
+
   deploy:
     name: Deploy
-    needs: verify
+    # Tests gate the deploy. They previously ran only in test.yml, which is a
+    # SEPARATE workflow triggered by the same push — so it raced this one and a
+    # red suite still shipped to production. Depending on them here is what makes
+    # the gate real.
+    needs: [verify, backend-test, frontend-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check deploy secrets are set
+        # Without these the next step writes an empty key file and ssh fails
+        # with "Permission denied (publickey)", which reads like the key is
+        # wrong rather than absent. Every deploy so far has been run by hand
+        # because of exactly that confusion, so name the cause instead.
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          missing=""
+          [ -n "$VPS_SSH_KEY" ] || missing="$missing VPS_SSH_KEY"
+          [ -n "$VPS_HOST" ]    || missing="$missing VPS_HOST"
+          [ -n "$VPS_USER" ]    || missing="$missing VPS_USER"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            echo "Set them under Settings → Secrets and variables → Actions."
+            echo "  VPS_SSH_KEY  the PRIVATE half of the keypair authorised on the box"
+            echo "  VPS_HOST     the VPS address"
+            echo "  VPS_USER     the SSH user"
+            exit 1
+          fi
+          echo "OK: deploy secrets present"
 
       - name: Add SSH key
         run: |
